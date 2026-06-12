@@ -1,0 +1,12 @@
+canonical_name,alias,company_type,relationship,notes
+Megafide Pharma,Megafide Pharma Pvt Ltd,Exporter,Competitor/Supplier,Normalize private limited variants
+Megafide Pharma,Megafide Pharma Private Limited,Exporter,Competitor/Supplier,Normalize private limited variants
+Asher Pharma,Asher Pharma GmbH,Importer,Target customer,Regulated market buyer
+Asher Pharma,Asher Pharma GMBH,Importer,Target customer,Same company casing variant
+Olympic Pharma,Olympic Pharma Ltd,Exporter,Competitor/Supplier,Competitor supplier
+Competitor B,Competitor B Pvt Ltd,Exporter,Competitor/Supplier,Competitor supplier
+Competitor C,Competitor C Pvt Ltd,Exporter,Competitor/Supplier,Competitor supplier
+Sample Formulations,Sample Formulations Inc,Importer,Target customer,Formulation company
+Shodhana Laboratories,Shodhana Laboratories Pvt Ltd,Exporter,Self,Existing supplier
+Existing Customer,Existing Customer Ltd,Importer,Existing customer,Normalize limited variants
+Existing Customer,Existing Customer Limited,Importer,Existing customer,Normalize limited variants

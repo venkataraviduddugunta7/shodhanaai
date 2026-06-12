@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.DS_Store
+data/shodhana_duloxetine.sqlite3
+data/uploads/*
+!data/uploads/.gitkeep
+

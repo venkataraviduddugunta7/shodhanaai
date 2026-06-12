@@ -1,0 +1,5 @@
+company,region,country,product,role,estimated_volume_kg,estimated_price_usd_kg,competitor_supplier,current_shodhana_customer,last_purchase_date,trend,notes
+Example Pharma GmbH,Europe,Germany,Duloxetine API,Buyer,1200,88,Competitor A,No,2026-02-15,Growing,Regulated market buyer; validate approvals needed
+Sample Formulations Inc,North America,USA,Duloxetine Pellets,Formulation company,750,105,Competitor B,No,2026-01-10,Growing,Potential pellets opportunity
+Existing Customer Ltd,Asia,India,Duloxetine API,Buyer,400,82,Competitor C,Yes,2026-03-01,Stable,Existing customer with expansion potential
+Integrated Competitor SA,Latin America,Brazil,Duloxetine API,Competitor,1500,79,Own API,No,2026-04-12,Stable,May not be suitable as target

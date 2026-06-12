@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model UploadedFile {
+  id             Int              @id @default(autoincrement())
+  originalName   String
+  storedPath     String
+  sourceType     String
+  rowCount       Int
+  cleanCount     Int
+  duplicateCount Int
+  qualityJson    Json
+  columnMapJson  Json
+  createdAt      DateTime         @default(now())
+  rawRecords     RawTradeRecord[]
+  cleanRecords   CleanTradeRecord[]
+}
+
+model RawTradeRecord {
+  id         Int           @id @default(autoincrement())
+  uploadId   Int
+  rowNumber  Int
+  rawJson    Json
+  upload     UploadedFile @relation(fields: [uploadId], references: [id])
+}
+
+model CleanTradeRecord {
+  id                    Int          @id @default(autoincrement())
+  uploadId              Int
+  rawRecordId           Int?
+  shipmentDate          String?
+  year                  Int?
+  monthKey              String?
+  hsCode                String?
+  rawProductDescription String
+  standardProduct       String
+  productConfidence     Float
+  productStatus         String
+  rawImporterName       String
+  standardImporterName  String
+  importerConfidence    Float
+  importerStatus        String
+  importerCountry       String?
+  importerPort          String?
+  rawExporterName       String
+  standardExporterName  String
+  exporterConfidence    Float
+  exporterStatus        String
+  exporterCountry       String?
+  exporterPort          String?
+  marketCategory        String?
+  quantity              Float?
+  units                 String?
+  quantityKg            Float?
+  quantityStatus        String
+  valueUsd              Float?
+  pricePerKg            Float?
+  invoiceCurrency       String?
+  duplicateKey          String
+  dataStatus            String
+  createdAt             DateTime     @default(now())
+  upload                UploadedFile @relation(fields: [uploadId], references: [id])
+}
+
+model ProductMapping {
+  id                      Int      @id @default(autoincrement())
+  rawProductDescription   String
+  suggestedStandardProduct String
+  confidenceScore         Float
+  approvedStandardProduct String?
+  status                  String
+  createdAt               DateTime @default(now())
+}
+
+model CompanyMapping {
+  id                           Int      @id @default(autoincrement())
+  rawCompanyName               String
+  suggestedStandardCompanyName String
+  confidenceScore              Float
+  approvedStandardCompanyName  String?
+  status                       String
+  createdAt                    DateTime @default(now())
+}
+
+model Opportunity {
+  id                Int      @id @default(autoincrement())
+  importer          String
+  country           String?
+  product           String
+  exporter          String
+  totalQuantityKg   Float?
+  totalValueUsd     Float?
+  averagePricePerKg Float?
+  shipmentCount     Int
+  firstShipmentDate String?
+  lastShipmentDate  String?
+  shodhanaStatus    String
+  opportunityScore  Int
+  tier              String
+  recommendedAction String
+  createdAt         DateTime @default(now())
+}
+
+model GeneratedPitch {
+  id             Int      @id @default(autoincrement())
+  opportunityKey String
+  actionType     String
+  content        String
+  createdAt      DateTime @default(now())
+}
+

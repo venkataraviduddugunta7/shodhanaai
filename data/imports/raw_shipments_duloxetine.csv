@@ -1,0 +1,7 @@
+source,shipment_date,product_name,exporter,importer,origin_country,destination_country,quantity_kg,total_value_usd,unit_price_usd_kg,dmf_grade,shipment_id,notes
+ChemDoss,2024-01-18,Duloxetine HCL,Megafide Pharma Pvt Ltd,Asher Pharma GmbH,India,Germany,400,146000,,DMF,CD-1001,Original shipment row
+API-FDF,2024-01-18,Duloxetine Hydrochloride,Megafide Pharma Private Limited,Asher Pharma GMBH,India,Germany,400,146000,,DMF,AP-7781,Same shipment from another source; should be removed as duplicate
+ChemDoss,2024-05-22,Duloxetin Hydrochloride,Olympic Pharma Ltd,Asher Pharma GmbH,India,Germany,500,181000,,Non-DMF,CD-1099,Name typo should map to Duloxetine HCL
+ChemDoss,2025-02-12,Duloxetine Pellets 20%,Competitor B Pvt Ltd,Sample Formulations Inc,India,USA,250,28000,,DMF,CD-2011,Pellets opportunity in regulated market
+ChemDoss,2025-07-04,Duloxetine HCl,Shodhana Laboratories Pvt Ltd,Existing Customer Ltd,India,India,150,12750,,DMF,SH-5555,Existing Shodhana sale
+ChemDoss,2025-07-09,Duloxetine HCl,Competitor C Pvt Ltd,Existing Customer Limited,India,India,100,9000,,DMF,CD-3333,Same customer also buying from competitor

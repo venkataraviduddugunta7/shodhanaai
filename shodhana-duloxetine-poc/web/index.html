@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shodhana AI - Duloxetine Trade Intelligence POC</title>
+  <link rel="stylesheet" href="/web/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark">S</div>
+      <div>
+        <h1>Shodhana AI</h1>
+        <p>Duloxetine Trade Intelligence POC</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="pill" id="uploadBadge">No file loaded</span>
+      <button class="ghost small tip" data-tooltip="Reload metrics, mappings, and opportunities from the local database." onclick="refreshAll()">Refresh</button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <nav class="sidebar">
+      <button class="nav-item active" data-page="upload" onclick="showPage('upload')">Upload</button>
+      <button class="nav-item" data-page="review" onclick="showPage('review')">Cleaning Review</button>
+      <button class="nav-item" data-page="cleaning" onclick="showPage('cleaning')">Cleaning</button>
+      <button class="nav-item" data-page="dashboard" onclick="showPage('dashboard')">Dashboard</button>
+      <button class="nav-item" data-page="opportunities" onclick="showPage('opportunities')">Opportunities</button>
+      <button class="nav-item" data-page="products" onclick="showPage('products')">Product Mappings</button>
+      <button class="nav-item" data-page="companies" onclick="showPage('companies')">Company Mappings</button>
+      <button class="nav-item" data-page="pitch" onclick="showPage('pitch')">Pitch Workspace</button>
+    </nav>
+
+    <main class="content">
+      <section class="page active" id="page-upload">
+        <div class="page-head">
+          <div>
+            <h2>Upload Market Data</h2>
+            <p>Chemdos/APIFDF style Duloxetine Excel or CSV data.</p>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>File Intake</h3>
+              <span class="step">1</span>
+            </div>
+            <div class="form-grid">
+              <label for="sourceType">Source type</label>
+              <select id="sourceType">
+                <option value="trade_data">Trade data Excel/CSV</option>
+                <option value="product_mapping">Product synonym master</option>
+                <option value="company_mapping">Company synonym master</option>
+              </select>
+
+              <label for="uploadFile">File</label>
+              <input id="uploadFile" type="file" accept=".xlsx,.csv">
+
+              <div class="button-row">
+                <button class="tip" data-tooltip="Upload the selected file, detect columns, clean rows, calculate price/kg, and replace the current trade dataset." onclick="uploadFile(this)">Upload & Process</button>
+                <button class="secondary tip" data-tooltip="Import the Duloxetine Excel sample provided by Shodhana into this new POC." onclick="importSample(this)">Import Sample File</button>
+              </div>
+            </div>
+            <div class="status" id="statusLine">Ready.</div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Detected Columns</h3>
+              <span class="step">2</span>
+            </div>
+            <div id="columnMap" class="code-box">No upload yet.</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h3>POC Flow</h3>
+            <span class="step">Demo</span>
+          </div>
+          <div class="flow">
+            <div>Upload Excel</div>
+            <div>Initial Cleaning</div>
+            <div>Cleaning Review</div>
+            <div>Approve/Edit Mappings</div>
+            <div>Re-run Cleaning</div>
+            <div>Dashboard</div>
+            <div>Pitch</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" id="page-review">
+        <div class="page-head">
+          <div>
+            <h2>Cleaning Review</h2>
+            <p>Approve, edit, or reject product and company mapping suggestions before using final dashboard numbers.</p>
+          </div>
+          <div class="button-row">
+            <button class="secondary tip" data-tooltip="Reprocess raw records using approved product/company mappings and rebuild dashboard/opportunities." onclick="rerunCleaning(this)">Re-run Cleaning</button>
+            <button class="ghost small tip" data-tooltip="Open the final dashboard after review." onclick="showPage('dashboard')">Dashboard</button>
+          </div>
+        </div>
+
+        <div class="flow review-flow">
+          <div>Upload Excel</div>
+          <div>Initial Cleaning</div>
+          <div>Cleaning Review</div>
+          <div>Approve/Edit</div>
+          <div>Re-run Cleaning</div>
+          <div>Dashboard</div>
+          <div>Opportunities</div>
+        </div>
+
+        <div class="stats-grid" id="reviewSummaryCards"></div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>Manual Review Filters</h3>
+              <p>Use these to focus the review meeting on only the rows that need human judgment.</p>
+            </div>
+          </div>
+          <div class="button-row filter-row">
+            <button class="ghost small" onclick="setReviewFilter('pending')">Pending mappings</button>
+            <button class="ghost small" onclick="setReviewFilter('low_confidence')">Low confidence</button>
+            <button class="ghost small" onclick="setReviewFilter('review_products')">Review products</button>
+            <button class="ghost small" onclick="setReviewFilter('invalid_units')">Invalid units</button>
+            <button class="ghost small" onclick="setReviewFilter('missing_price')">Missing price/kg</button>
+          </div>
+          <div id="reviewIssueTable" class="table-wrap"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>Product Mapping Review</h3>
+              <p>Raw product descriptions are classified into API, pellets, placebo pellets, or review required.</p>
+            </div>
+            <span class="pill" id="productReviewCount">0 rows</span>
+          </div>
+          <div id="productReviewTable" class="table-wrap tall"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>Company Mapping Review</h3>
+              <p>Importer and exporter names are normalized after removing legal suffixes and punctuation.</p>
+            </div>
+            <span class="pill" id="companyReviewCount">0 rows</span>
+          </div>
+          <div id="companyReviewTable" class="table-wrap tall"></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-cleaning">
+        <div class="page-head">
+          <div>
+            <h2>Cleaning Summary</h2>
+            <p>Product classification, company normalization, quantity checks, and review flags.</p>
+          </div>
+          <div class="button-row">
+            <button class="secondary small tip" data-tooltip="Open the mapping approval workflow." onclick="showPage('review')">Review Mappings</button>
+          </div>
+        </div>
+        <div class="stats-grid" id="qualityCards"></div>
+        <div class="grid two">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Product Classification</h3>
+              <button class="ghost small tip" data-tooltip="Open the product mapping work area." onclick="showPage('products')">Open</button>
+            </div>
+            <div id="productMiniTable" class="table-wrap"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Company Normalization</h3>
+              <button class="ghost small tip" data-tooltip="Open the company mapping work area." onclick="showPage('companies')">Open</button>
+            </div>
+            <div id="companyMiniTable" class="table-wrap"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" id="page-dashboard">
+        <div class="page-head">
+          <div>
+            <h2>Market Dashboard</h2>
+            <p>Duloxetine demand, supplier movement, price/kg, competitor activity, and customer targeting signals.</p>
+          </div>
+          <div class="button-row">
+            <button class="ghost small tip" data-tooltip="Download filtered cleaned records as an Excel-compatible XLSX file." onclick="downloadExport('cleaned')">Cleaned XLSX</button>
+            <button class="ghost small tip" data-tooltip="Download filtered opportunity table as an Excel-compatible XLSX file." onclick="downloadExport('opportunities')">Opportunities XLSX</button>
+            <button class="ghost small tip" data-tooltip="Download filtered dashboard KPI summary as CSV." onclick="downloadExport('summary')">Summary CSV</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>Dashboard Filters</h3>
+              <p>Apply one filter set across KPIs, charts, competitor intelligence, and customer intelligence.</p>
+            </div>
+          </div>
+          <div class="filters dashboard-filters">
+            <select id="dashProduct"><option value="">All products</option></select>
+            <select id="dashImporterCountry"><option value="">All importer countries</option></select>
+            <select id="dashExporterCountry"><option value="">All exporter countries</option></select>
+            <input id="dashImporter" placeholder="Importer name">
+            <input id="dashExporter" placeholder="Exporter name">
+            <select id="dashYear"><option value="">All years</option></select>
+            <select id="dashMonth"><option value="">All months</option></select>
+            <select id="dashStatus">
+              <option value="">All supply status</option>
+              <option value="Existing Shodhana Supply">Existing Shodhana Supply</option>
+              <option value="Competitor Supply">Competitor Supply</option>
+            </select>
+            <button onclick="loadDashboard()">Apply</button>
+            <button class="ghost" onclick="clearDashboardFilters()">Clear</button>
+          </div>
+        </div>
+        <div class="stats-grid" id="dashboardCards"></div>
+        <div class="grid two">
+          <div class="panel">
+            <div class="panel-head"><h3>Product Category Split By Quantity</h3></div>
+            <div id="productQuantityChart" class="chart-box"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Country-wise Demand By Quantity</h3></div>
+            <div id="countryDemandChart" class="chart-box"></div>
+          </div>
+        </div>
+        <div class="grid three">
+          <div class="panel">
+            <div class="panel-head"><h3>Top 10 Importer Countries</h3></div>
+            <div id="topCountryChart" class="chart-box"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Top 10 Importers</h3></div>
+            <div id="topImporterChart" class="chart-box"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Top 10 Exporters</h3></div>
+            <div id="topExporterChart" class="chart-box"></div>
+          </div>
+        </div>
+        <div class="grid two">
+          <div class="panel">
+            <div class="panel-head"><h3>Month-wise Quantity Trend</h3></div>
+            <div id="monthQuantityTrend" class="chart-box"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Average Price/KG Trend By Month</h3></div>
+            <div id="monthPriceTrend" class="chart-box"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Price Range By Product Category</h3></div>
+          <div id="priceRangeChart" class="chart-box"></div>
+        </div>
+        <div class="grid two">
+          <div class="panel">
+            <div class="panel-head"><h3>Competitor Intelligence</h3></div>
+            <div id="competitorTable" class="table-wrap tall"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Customer Intelligence</h3></div>
+            <div id="customerTable" class="table-wrap tall"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" id="page-opportunities">
+        <div class="page-head">
+          <div>
+            <h2>Opportunity Engine</h2>
+            <p>Ranked customers with market price comparison, scoring reasons, and pitch actions.</p>
+          </div>
+          <div class="button-row">
+            <button class="ghost small tip" data-tooltip="Download the filtered opportunity table as XLSX." onclick="downloadExport('opportunities', 'opportunity')">Export XLSX</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="filters dashboard-filters">
+            <select id="opProduct"><option value="">All products</option></select>
+            <select id="opImporterCountry"><option value="">All importer countries</option></select>
+            <select id="opExporterCountry"><option value="">All exporter countries</option></select>
+            <input id="opImporter" placeholder="Importer name">
+            <input id="opExporter" placeholder="Exporter name">
+            <select id="opYear"><option value="">All years</option></select>
+            <select id="opMonth"><option value="">All months</option></select>
+            <select id="opStatus">
+              <option value="">All supply status</option>
+              <option value="Existing Shodhana Supply">Existing Shodhana Supply</option>
+              <option value="Competitor Supply">Competitor Supply</option>
+            </select>
+            <button class="tip" data-tooltip="Apply filters to the grouped opportunity table." onclick="loadOpportunities()">Apply</button>
+            <button class="ghost tip" data-tooltip="Clear all opportunity filters." onclick="clearFilters()">Clear</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Ranked Opportunities</h3>
+            <span class="pill" id="opportunityCount">0 rows</span>
+          </div>
+          <div id="opportunityTable" class="table-wrap tall"></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-opportunity-detail">
+        <div class="page-head">
+          <div>
+            <h2>Opportunity Detail</h2>
+            <p>Customer-level explanation, supplier history, shipment history, price analysis, and recommended action.</p>
+          </div>
+          <div class="button-row">
+            <button class="ghost small" onclick="showPage('opportunities')">Back</button>
+            <button class="small" onclick="generatePitchForDetail()">Generate Pitch</button>
+          </div>
+        </div>
+        <div id="opportunityDetail"></div>
+      </section>
+
+      <section class="page" id="page-products">
+        <div class="page-head">
+          <div>
+            <h2>Product Mapping Table</h2>
+            <p>Raw product description to Duloxetine API, Pellets, Placebo Pellets, or Review Required.</p>
+          </div>
+        </div>
+        <div class="panel">
+          <div id="productMappings" class="table-wrap tall"></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-companies">
+        <div class="page-head">
+          <div>
+            <h2>Company Mapping Table</h2>
+            <p>Raw importer/exporter names to standard company names with confidence and review status.</p>
+          </div>
+        </div>
+        <div class="panel">
+          <div id="companyMappings" class="table-wrap tall"></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-pitch">
+        <div class="page-head">
+          <div>
+            <h2>AI Pitch Workspace</h2>
+            <p>Customer-specific summary, price strategy, email drafts, PPT outline, and follow-up plan.</p>
+            <p id="pitchMeta">Select an opportunity and click Generate Pitch.</p>
+          </div>
+          <div class="button-row hidden" id="pitchTools">
+            <button class="ghost small tip" data-tooltip="Regenerate the pitch from the latest opportunity data and Shodhana positioning." onclick="regeneratePitch()">Regenerate</button>
+            <button class="ghost small tip" data-tooltip="Copy the currently selected email tone." onclick="copyPitchEmail()">Copy Email</button>
+            <button class="ghost small tip" data-tooltip="Export the full pitch package as a text file." onclick="exportPitchText()">Export Pitch Text</button>
+            <button class="ghost small tip" data-tooltip="Export the six-slide PPT outline as markdown." onclick="exportPptMarkdown()">PPT Markdown</button>
+            <button class="ghost small tip" data-tooltip="Download the customer summary as markdown for review." onclick="exportSummaryMarkdown()">Summary Markdown</button>
+            <button class="small tip" data-tooltip="Return to ranked customer opportunities." onclick="showPage('opportunities')">Opportunities</button>
+          </div>
+        </div>
+        <div id="pitchContent">
+          <div class="empty">No pitch loaded yet. Open the Opportunities page and generate a pitch for a target customer.</div>
+        </div>
+        <pre id="aiOutput" class="hidden">Ready.</pre>
+      </section>
+    </main>
+  </div>
+
+  <script src="/web/app.js"></script>
+</body>
+</html>
