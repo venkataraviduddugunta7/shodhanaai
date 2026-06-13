@@ -420,9 +420,12 @@ function aliasChecklist(key, group, index) {
 
 function smartGroupValueControl(key, inputId, value) {
   if (key === "products") {
-    return `<input class="smart-value" list="standardProductOptions" id="${inputId}" value="${esc(value)}">`;
+    return `<input class="smart-value" list="productGroupOptions" id="${inputId}" value="${esc(value)}">`;
   }
-  return `<input class="smart-value" id="${inputId}" value="${esc(value)}">`;
+  if (key === "companies") {
+    return `<input class="smart-value" list="companyGroupOptions" id="${inputId}" value="${esc(value)}">`;
+  }
+  return `<input class="smart-value" list="countryGroupOptions" id="${inputId}" value="${esc(value)}">`;
 }
 
 function groupNeedsConfirm(group) {
