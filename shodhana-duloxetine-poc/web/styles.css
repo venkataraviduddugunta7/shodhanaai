@@ -476,6 +476,28 @@ td strong { color: #14251f; }
 .alias-rejected {
   opacity: .62;
 }
+.mapping-alias-note {
+  display: inline-block;
+  margin-top: 4px;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 820;
+  cursor: help;
+}
+.mapping-alias-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.mapping-alias-list span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: var(--soft);
+  color: #31423c;
+  font-size: 11px;
+  font-weight: 760;
+}
 .smart-group-actions {
   display: grid;
   align-content: start;

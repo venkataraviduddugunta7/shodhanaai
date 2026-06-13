@@ -678,10 +678,14 @@ function renderOpportunities(rows) {
     <tbody>
       ${rows.map((row, index) => `<tr>
         <td class="score">#${row.rank}</td>
-        <td><strong>${esc(row.importer)}</strong><br><span class="muted">${esc((row.reasons || []).join(', '))}</span></td>
+        <td>
+          <strong>${esc(row.importer)}</strong>
+          ${mappingAliasNote(row.importer_aliases, "raw company names")}
+          <br><span class="muted">${esc((row.reasons || []).join(', '))}</span>
+        </td>
         <td>${esc(row.country)}<br><span class="muted">${esc(row.market_category)}</span></td>
         <td>${esc(row.product)}</td>
-        <td>${esc(row.current_supplier)}</td>
+        <td>${esc(row.current_supplier)}${mappingAliasNote(row.supplier_aliases, "raw supplier names")}</td>
         <td>${num(row.total_quantity_kg)}</td>
         <td class="score">${money(row.avg_price_per_kg)}</td>
         <td>${money(row.market_avg_price_per_kg)}</td>
@@ -702,6 +706,12 @@ function renderOpportunities(rows) {
     </tbody>
   </table>`;
   setTooltipTitles();
+}
+
+function mappingAliasNote(aliases, label) {
+  const values = Array.isArray(aliases) ? aliases.filter(Boolean) : [];
+  if (values.length <= 1) return "";
+  return `<br><span class="mapping-alias-note tip" data-tooltip="${esc(values.join(" · "))}">${num(values.length)} ${esc(label)} clubbed</span>`;
 }
 
 async function aiAction(action, index) {
@@ -969,6 +979,8 @@ function renderOpportunityDetail(data) {
           <tr><th>Shipments</th><td>${num(data.customer_summary?.shipment_count)}</td></tr>
           <tr><th>Last Shipment</th><td>${esc(data.customer_summary?.last_shipment_date)}</td></tr>
           <tr><th>Status</th><td>${esc(opp.shodhana_status)}</td></tr>
+          <tr><th>Raw Names Clubbed</th><td>${mappingAliasList(data.customer_summary?.importer_aliases)}</td></tr>
+          <tr><th>Supplier Aliases</th><td>${mappingAliasList(data.customer_summary?.supplier_aliases)}</td></tr>
         </tbody></table>
       </div>
       <div class="panel">
@@ -997,15 +1009,22 @@ function renderOpportunityDetail(data) {
       <div class="panel-head"><h3>Shipment History</h3></div>
       ${shipmentHistoryTable(data.shipment_history || [])}
     </div>`;
+  setTooltipTitles();
 }
 
 function supplierHistoryTable(rows) {
   return rows.length ? `<div class="table-wrap"><table>
     <thead><tr><th>Supplier</th><th>Country</th><th>Qty KG</th><th>Value</th><th>Avg $/KG</th><th>Shipments</th><th>Last Shipment</th><th>Status</th></tr></thead>
     <tbody>${rows.map((row) => `<tr>
-      <td><strong>${esc(row.supplier)}</strong></td><td>${esc(row.exporter_country)}</td><td>${num(row.total_quantity_kg)}</td><td>${money(row.total_value_usd)}</td><td class="score">${money(row.avg_price_per_kg)}</td><td>${num(row.shipment_count)}</td><td>${esc(row.last_shipment_date)}</td><td>${esc(row.shodhana_status)}</td>
+      <td><strong>${esc(row.supplier)}</strong>${mappingAliasNote(row.supplier_aliases, "raw supplier names")}</td><td>${esc(row.exporter_country)}</td><td>${num(row.total_quantity_kg)}</td><td>${money(row.total_value_usd)}</td><td class="score">${money(row.avg_price_per_kg)}</td><td>${num(row.shipment_count)}</td><td>${esc(row.last_shipment_date)}</td><td>${esc(row.shodhana_status)}</td>
     </tr>`).join("")}</tbody>
   </table></div>` : `<div class="empty">No supplier history.</div>`;
+}
+
+function mappingAliasList(aliases) {
+  const values = Array.isArray(aliases) ? aliases.filter(Boolean) : [];
+  if (!values.length) return `<span class="muted">No aliases</span>`;
+  return `<div class="mapping-alias-list">${values.map((value) => `<span>${esc(value)}</span>`).join("")}</div>`;
 }
 
 function shipmentHistoryTable(rows) {

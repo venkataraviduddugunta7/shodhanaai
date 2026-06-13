@@ -2327,6 +2327,18 @@ def shodhana_status_for_suppliers(suppliers):
     return "Competitor Supply"
 
 
+def split_distinct_text(value):
+    result = []
+    seen = set()
+    for part in str(value or "").split(","):
+        text = part.strip()
+        key = simple_key(text)
+        if text and key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result
+
+
 def opportunity_id(item):
     key = "|".join([item.get("importer", ""), item.get("country", ""), item.get("product", "")]).lower()
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
