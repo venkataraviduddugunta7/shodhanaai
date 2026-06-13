@@ -1,8 +1,8 @@
-# Shodhana AI - Duloxetine Trade Intelligence POC
+# Shodhana Engine - Duloxetine Trade Intelligence
 
-Fresh proof of concept for the first Shodhana AI Grow module.
+Sales-ready Duloxetine trade intelligence engine for uploading market files, normalizing messy trade data, confirming reusable master mappings, ranking opportunities, and preparing customer pitch material.
 
-The first demo proves:
+The engine supports:
 
 1. Upload Duloxetine Excel/CSV market data
 2. Detect columns from Chemdos/APIFDF style files
@@ -11,8 +11,8 @@ The first demo proves:
 5. Convert quantity into KG where possible
 6. Calculate price per KG
 7. Smart-confirm grouped product, company, and country mappings
-8. Save approved mappings as reusable SQLite master data
-9. Re-run cleaning from raw records using approved mappings and club similar names
+8. Save approved mappings as reusable SQLite master configuration
+9. Apply configuration from raw records using approved mappings and club similar names
 10. Show a business dashboard for demand, suppliers, countries, price, and Shodhana/competitor supply
 11. Rank customer opportunities using quantity, recency, supplier, price, country market type, and data quality
 12. Open a customer opportunity detail page with shipment history, supplier history, price analysis, and recommended action
@@ -50,14 +50,14 @@ Volume Mount Path: /app/persistent-data
 Variable: SHODHANA_DATA_DIR=/app/persistent-data
 ```
 
-## Demo Flow
+## Engine Flow
 
 ```text
 Upload Excel
 -> Initial Cleaning
--> Cleaning Review
+-> Review & Configuration
 -> Smart Confirm mappings
--> Re-run Cleaning
+-> Apply Config
 -> Dashboard
 -> Opportunities
 -> Pitch
@@ -69,9 +69,9 @@ The browser supports `/cleaning-review` directly:
 http://127.0.0.1:8010/cleaning-review
 ```
 
-## Cleaning Review
+## Review & Configuration
 
-The Cleaning Review module is the manual-control layer before the final dashboard.
+The Review & Configuration module is the manual-control layer before the final dashboard and opportunity engine.
 
 It shows:
 
@@ -94,7 +94,14 @@ The system groups aliases by the suggested master value:
 
 The reviewer can confirm the whole group, edit the master value, or reject the group. Every alias has a checkbox, including high-confidence aliases. If an alias does not belong in that group, uncheck it before `Confirm Group` or `Save Edited`. The unchecked alias moves into `Remaining / Create New Mapping`, where the reviewer can select one or more aliases, type a new master product/company/country name, and click `Save New Mapping`.
 
-Confirmed groups disappear from the Smart Confirm modal. Only groups that still need a decision remain visible, which keeps the review focused during a client demo. Mapping saves are intentionally fast: `Confirm Group`, `Save Edited`, `Save New Mapping`, and `Approve Confident` update the mapping configuration only. After review is complete, click `Re-run Cleaning` once to apply all approved mappings to the full Excel dataset and rebuild dashboard/opportunity results.
+Confirmed groups disappear from the Smart Confirm modal. Only groups that still need a decision remain visible, which keeps the review focused during a client demo. Mapping saves are intentionally fast: `Confirm Group`, `Save Edited`, `Save New Mapping`, and `Approve Confident` update the mapping configuration only. After review is complete, click `Apply Config` once to apply all approved mappings to the full Excel dataset and rebuild dashboard/opportunity results.
+
+Use `Manage Groups` when an approved mapping needs correction later. In Manage mode, confirmed product, company, and country groups are editable:
+
+- Rename the master group value and click `Save Group`.
+- Uncheck aliases that do not belong; they move into `Remaining / Create New Mapping`.
+- Open the Remaining group, select one or more aliases, type an existing master name to add them to that group, or type a new master name to create a new group.
+- Click `Apply Config` once after group management is complete.
 
 Approved mappings stay in the SQLite database. On the next upload, the same raw name or a very strong normalized company match is applied automatically, so the team does not approve the same company/product/country again.
 
@@ -124,9 +131,9 @@ For company rows, edit the suggested standard company name directly in the text 
 
 For country rows, edit the suggested standard country name directly in the text field, then click `Approve` or `Edit`.
 
-### How To Re-run Cleaning
+### How To Apply Config
 
-Approving, editing, rejecting, or removing aliases does not reprocess the full Excel immediately. This keeps group confirmation fast. After the reviewer finishes mapping decisions, click `Re-run Cleaning` once.
+Approving, editing, rejecting, or removing aliases does not reprocess the full Excel immediately. This keeps group confirmation fast. After the reviewer finishes mapping decisions, click `Apply Config` once.
 
 The system will:
 

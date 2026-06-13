@@ -95,6 +95,42 @@ function renderImportResult(result) {
   document.getElementById("columnMap").textContent = Object.keys(map).length
     ? JSON.stringify(map, null, 2)
     : JSON.stringify(result, null, 2);
+  renderUploadSummary(result);
+}
+
+function renderUploadSummary(result) {
+  const container = document.getElementById("uploadSummary");
+  if (!container) return;
+  const summary = result.intake_summary || {};
+  const readiness = result.mapping_readiness || {};
+  if (!Object.keys(summary).length) {
+    container.classList.add("hidden");
+    container.innerHTML = "";
+    return;
+  }
+  container.classList.remove("hidden");
+  const rows = [
+    ["Product groups", summary.products?.groups, summary.products?.needs_confirmation],
+    ["Company groups", summary.companies?.groups, summary.companies?.needs_confirmation],
+    ["Country groups", summary.countries?.groups, summary.countries?.needs_confirmation],
+  ];
+  container.innerHTML = `<div class="upload-summary-head">
+    <span class="eyebrow">Intake Result</span>
+    <strong>${num(result.clean_rows || result.rows || 0)} clean rows</strong>
+    <em>${num(result.duplicates_removed || 0)} duplicates removed</em>
+  </div>
+  <div class="upload-summary-grid">
+    ${rows.map(([label, groups, pending]) => `<div>
+      <span>${esc(label)}</span>
+      <strong>${num(groups)}</strong>
+      <em>${num(pending)} need confirm</em>
+    </div>`).join("")}
+  </div>
+  <div class="upload-next ${readiness.requires_review ? "needs-review" : ""}">
+    ${readiness.requires_review
+      ? `Confirm ${num(readiness.total_aliases || 0)} aliases before using opportunities.`
+      : "Mappings are ready. Apply config if you changed anything, then open Dashboard or Opportunities."}
+  </div>`;
 }
 
 function renderProductOptionDatalist() {
@@ -250,11 +286,11 @@ function renderSmartConfirm(groups) {
     return `<div class="smart-card">
       <div>
         <span>${esc(meta.label)}</span>
-        <strong>${num(rows.length)} master groups</strong>
+        <strong>${num(rows.length)} groups</strong>
       </div>
       <div class="smart-metrics">
         <span>${num(aliases)} aliases</span>
-        <span>${num(needsConfirm)} need confirm</span>
+        <span>${num(needsConfirm)} need confirmation</span>
         <span>${num(approved)} approved</span>
       </div>
       <div class="smart-card-actions">
@@ -758,12 +794,12 @@ function renderOpportunityRerunGate() {
   container.innerHTML = `<div class="review-gate">
     <div>
       <span class="eyebrow">Cleaning Re-run Required</span>
-      <h3>Apply saved mappings before viewing opportunities</h3>
-      <p>Your product, company, or country mappings were saved quickly. Run cleaning once after review to apply those mappings to all raw trade rows and rebuild dashboard/opportunity results.</p>
+      <h3>Apply saved configuration before viewing opportunities</h3>
+      <p>Your product, company, or country mappings were saved quickly. Apply the configuration once after review to rebuild dashboard and opportunity results from the raw upload.</p>
     </div>
     <div class="button-row">
       <button onclick="showPage('review')">Go to Cleaning Review</button>
-      <button class="secondary" onclick="rerunCleaning(this)">Re-run Cleaning</button>
+      <button class="secondary" onclick="rerunCleaning(this)">Apply Config</button>
     </div>
   </div>`;
 }
@@ -1374,10 +1410,15 @@ async function rerunCleaning(button) {
   await withBusy(button, "Re-running", async () => {
     const result = await postJSON("/api/rerun-cleaning", {});
     markMappingsClean();
-    setStatus(`Cleaning re-run complete: ${result.clean_rows} rows regenerated, ${result.duplicates_removed} duplicates removed.`);
+    setStatus(`Configuration applied: ${result.clean_rows} rows regenerated, ${result.duplicates_removed} duplicates removed.`);
     await refreshAll();
     showPage("dashboard");
   });
+}
+
+function scrollToMappingTables() {
+  const target = document.getElementById("productReviewTable");
+  if (target) target.scrollIntoView({behavior: "smooth", block: "start"});
 }
 
 function renderProductMappings(rows) {
@@ -1551,7 +1592,10 @@ function pageToPath(page) {
     review: "/cleaning-review",
     dashboard: "/dashboard",
     opportunities: "/opportunities",
-    countries: "/countries",
+    products: "/cleaning-review",
+    companies: "/cleaning-review",
+    countries: "/cleaning-review",
+    cleaning: "/cleaning-review",
     "opportunity-detail": window.location.pathname.startsWith("/opportunities/") ? window.location.pathname : "/opportunities",
     pitch: window.location.pathname.startsWith("/pitch/") ? window.location.pathname : "/pitch",
   }[page] || "/";
@@ -1564,6 +1608,6 @@ function pathToPage(path) {
     "/cleaning-review": "review",
     "/dashboard": "dashboard",
     "/opportunities": "opportunities",
-    "/countries": "countries",
+    "/countries": "review",
   }[path] || "upload";
 }

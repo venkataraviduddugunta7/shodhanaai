@@ -489,6 +489,8 @@ def import_trade_file(path, original_name, replace=True):
         "duplicates_removed": duplicate_count,
         "detected_columns": column_map,
         "quality": quality,
+        "intake_summary": upload_intake_summary(),
+        "mapping_readiness": mapping_review_status(),
     }
 
 
@@ -706,6 +708,30 @@ def mapping_review_status(groups=None):
             )
     result["requires_review"] = result["total_groups"] > 0
     return result
+
+
+def upload_intake_summary():
+    groups = mapping_groups()
+    summary = {
+        "products": _intake_summary_for_groups(groups.get("products", [])),
+        "companies": _intake_summary_for_groups(groups.get("companies", [])),
+        "countries": _intake_summary_for_groups(groups.get("countries", [])),
+    }
+    sections = [summary["products"], summary["companies"], summary["countries"]]
+    summary["total_groups"] = sum(item["groups"] for item in sections)
+    summary["total_aliases"] = sum(item["aliases"] for item in sections)
+    summary["needs_confirmation"] = sum(item["needs_confirmation"] for item in sections)
+    summary["approved_aliases"] = sum(item["approved_aliases"] for item in sections)
+    return summary
+
+
+def _intake_summary_for_groups(groups):
+    return {
+        "groups": len(groups),
+        "aliases": sum(int(group.get("alias_count") or 0) for group in groups),
+        "needs_confirmation": sum(int(group.get("needs_review_count") or 0) for group in groups),
+        "approved_aliases": sum(int(group.get("approved_count") or 0) for group in groups),
+    }
 
 
 def opportunity_detail(opportunity_id_value):
@@ -1547,7 +1573,10 @@ def approved_company_map(conn):
         select raw_company_name
         from company_mappings
         where status = 'Rejected'
-          and reason_for_suggestion like 'Removed from this Smart Confirm group%'
+          and (
+              reason_for_suggestion like 'Removed from this Smart Confirm group%'
+              or reason_for_suggestion like 'Removed from the previous Smart Confirm group%'
+          )
         """
     ).fetchall()
     for row in rejected_rows:
@@ -2058,6 +2087,15 @@ def _replace_product_mappings(conn, rows):
                 approved = ""
                 status = "Rejected"
                 reason = existing.get("reason_for_suggestion") or "Rejected product mapping retained."
+            elif (
+                existing.get("status") == "Pending"
+                and simple_key(existing.get("suggested_standard_product")) == simple_key(REMAINING_MAPPING_VALUE)
+            ):
+                suggested = REMAINING_MAPPING_VALUE
+                approved = ""
+                status = "Pending"
+                confidence = min(float(confidence or 0), 0.65)
+                reason = existing.get("reason_for_suggestion") or "Alias is waiting in Remaining / Create New Mapping."
             conn.execute(
                 """
                 update product_mappings
@@ -2115,6 +2153,15 @@ def _replace_company_mappings(conn, rows):
                 approved = ""
                 status = "Rejected"
                 reason = existing.get("reason_for_suggestion") or "Rejected company mapping retained."
+            elif (
+                existing.get("status") == "Pending"
+                and simple_key(existing.get("suggested_standard_company_name")) == simple_key(REMAINING_MAPPING_VALUE)
+            ):
+                suggested = REMAINING_MAPPING_VALUE
+                approved = ""
+                status = "Pending"
+                confidence = min(float(confidence or 0), 0.65)
+                reason = existing.get("reason_for_suggestion") or "Alias is waiting in Remaining / Create New Mapping."
             conn.execute(
                 """
                 update company_mappings
@@ -2183,6 +2230,15 @@ def _replace_country_mappings(conn, rows):
                 approved = ""
                 status = "Rejected"
                 reason = existing.get("reason_for_suggestion") or "Rejected country mapping retained."
+            elif (
+                existing.get("status") == "Pending"
+                and simple_key(existing.get("suggested_standard_country_name")) == simple_key(REMAINING_MAPPING_VALUE)
+            ):
+                suggested = REMAINING_MAPPING_VALUE
+                approved = ""
+                status = "Pending"
+                confidence = min(float(confidence or 0), 0.65)
+                reason = existing.get("reason_for_suggestion") or "Alias is waiting in Remaining / Create New Mapping."
             conn.execute(
                 """
                 update country_mappings

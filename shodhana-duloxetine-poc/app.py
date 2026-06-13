@@ -272,7 +272,7 @@ def main():
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8010"))
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"Shodhana AI Duloxetine POC running at http://{host}:{port}")
+    print(f"Shodhana Engine running at http://{host}:{port}")
     print("Upload the provided Excel or click Import Sample File in the app.")
     server.serve_forever()
 

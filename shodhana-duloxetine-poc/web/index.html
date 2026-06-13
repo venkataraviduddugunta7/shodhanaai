@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Shodhana AI - Duloxetine Trade Intelligence POC</title>
+  <title>Shodhana Engine - Duloxetine Trade Intelligence</title>
   <link rel="stylesheet" href="/web/styles.css">
 </head>
 <body>
@@ -11,8 +11,8 @@
     <div class="brand-block">
       <div class="brand-mark">S</div>
       <div>
-        <h1>Shodhana AI</h1>
-        <p>Duloxetine Trade Intelligence POC</p>
+        <h1>Shodhana Engine</h1>
+        <p>Duloxetine Trade Intelligence</p>
       </div>
     </div>
     <div class="top-actions">
@@ -23,24 +23,27 @@
 
   <div class="shell">
     <nav class="sidebar">
-      <button class="nav-item active" data-page="upload" onclick="showPage('upload')">Upload</button>
-      <button class="nav-item" data-page="review" onclick="showPage('review')">Cleaning Review</button>
-      <button class="nav-item" data-page="cleaning" onclick="showPage('cleaning')">Cleaning</button>
+      <button class="nav-item active" data-page="upload" onclick="showPage('upload')">Intake</button>
+      <button class="nav-item" data-page="review" onclick="showPage('review')">Review & Config</button>
       <button class="nav-item" data-page="dashboard" onclick="showPage('dashboard')">Dashboard</button>
       <button class="nav-item" data-page="opportunities" onclick="showPage('opportunities')">Opportunities</button>
-      <button class="nav-item" data-page="products" onclick="showPage('products')">Product Mappings</button>
-      <button class="nav-item" data-page="companies" onclick="showPage('companies')">Company Mappings</button>
-      <button class="nav-item" data-page="countries" onclick="showPage('countries')">Country Mappings</button>
-      <button class="nav-item" data-page="pitch" onclick="showPage('pitch')">Pitch Workspace</button>
+      <button class="nav-item" data-page="pitch" onclick="showPage('pitch')">Pitch</button>
     </nav>
 
     <main class="content">
       <section class="page active" id="page-upload">
         <div class="page-head">
           <div>
-            <h2>Upload Market Data</h2>
-            <p>Chemdos/APIFDF style Duloxetine Excel or CSV data.</p>
+            <h2>Trade Data Intake</h2>
+            <p>Upload Excel/CSV data once, then let the engine normalize products, companies, countries, and sales opportunities.</p>
           </div>
+        </div>
+
+        <div class="engine-strip">
+          <div><span>1</span><strong>Upload file</strong><em>Excel, CSV, or mapping master</em></div>
+          <div><span>2</span><strong>Normalize aliases</strong><em>Company, product, country groups</em></div>
+          <div><span>3</span><strong>Confirm config</strong><em>Save reusable master mappings</em></div>
+          <div><span>4</span><strong>Pitch customers</strong><em>Ranked opportunity workspace</em></div>
         </div>
 
         <div class="grid two">
@@ -67,6 +70,7 @@
               </div>
             </div>
             <div class="status" id="statusLine">Ready.</div>
+            <div id="uploadSummary" class="upload-summary hidden"></div>
           </div>
 
           <div class="panel">
@@ -80,16 +84,16 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h3>POC Flow</h3>
-            <span class="step">Demo</span>
+            <h3>Engine Flow</h3>
+            <span class="step">Live</span>
           </div>
           <div class="flow">
             <div>Upload Excel</div>
-            <div>Initial Cleaning</div>
-            <div>Cleaning Review</div>
-            <div>Approve/Edit Mappings</div>
-            <div>Re-run Cleaning</div>
-            <div>Dashboard</div>
+            <div>Extract Fields</div>
+            <div>Group Aliases</div>
+            <div>Confirm Masters</div>
+            <div>Apply Config</div>
+            <div>Rank Buyers</div>
             <div>Pitch</div>
           </div>
         </div>
@@ -98,23 +102,13 @@
       <section class="page" id="page-review">
         <div class="page-head">
           <div>
-            <h2>Cleaning Review</h2>
-            <p>Approve, edit, or reject product, company, and country mapping suggestions before using final dashboard numbers.</p>
+            <h2>Review & Configuration</h2>
+            <p>Confirm product, company, and country groups once. Future uploads reuse these master mappings automatically.</p>
           </div>
           <div class="button-row">
-            <button class="secondary tip" data-tooltip="Reprocess raw records using approved product, company, and country mappings and rebuild dashboard/opportunities." onclick="rerunCleaning(this)">Re-run Cleaning</button>
+            <button class="secondary tip" data-tooltip="Reprocess raw records using approved product, company, and country mappings and rebuild dashboard/opportunities." onclick="rerunCleaning(this)">Apply Config</button>
             <button class="ghost small tip" data-tooltip="Open the final dashboard after review." onclick="showPage('dashboard')">Dashboard</button>
           </div>
-        </div>
-
-        <div class="flow review-flow">
-          <div>Upload Excel</div>
-          <div>Initial Cleaning</div>
-          <div>Cleaning Review</div>
-          <div>Approve/Edit</div>
-          <div>Re-run Cleaning</div>
-          <div>Dashboard</div>
-          <div>Opportunities</div>
         </div>
 
         <div class="stats-grid" id="reviewSummaryCards"></div>
@@ -122,13 +116,14 @@
         <div class="panel">
           <div class="panel-head">
             <div>
-              <h3>Smart Confirm Mappings</h3>
+              <h3>Master Mapping Config</h3>
               <p>Confirm grouped product, company, and country aliases once. Approved master names are stored and reused for later uploads.</p>
             </div>
             <div class="button-row">
               <button class="secondary tip" data-tooltip="Open a grouped confirmation view for product, company, and country master mappings." onclick="openSmartConfirmModal()">Open Smart Confirm</button>
               <button class="ghost small tip" data-tooltip="Approve confident pending groups and then re-run cleaning from the approved master mappings." onclick="approveConfidentGroups(this)">Approve Confident</button>
               <button class="ghost small tip" data-tooltip="Save confirmed master mappings into default seed CSV files so fresh deployments can load the same knowledge." onclick="syncMasterMappings(this)">Save Defaults</button>
+              <button class="ghost small tip" data-tooltip="Open the detailed mapping tables below for row-level edits." onclick="scrollToMappingTables()">Mapping Tables</button>
             </div>
           </div>
           <div id="smartConfirmCards" class="smart-grid"></div>
@@ -428,7 +423,7 @@
       </div>
       <div id="smartConfirmModalBody" class="smart-modal-body"></div>
       <div class="modal-actions">
-        <button class="secondary tip" data-tooltip="Apply approved mappings to all raw trade records and refresh the dashboard." onclick="rerunCleaning(this)">Re-run Cleaning</button>
+        <button class="secondary tip" data-tooltip="Apply approved mappings to all raw trade records and refresh the dashboard." onclick="rerunCleaning(this)">Apply Config</button>
         <button class="small" onclick="closeSmartConfirmModal()">Done</button>
       </div>
     </div>
