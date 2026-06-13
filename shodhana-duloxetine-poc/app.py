@@ -22,6 +22,7 @@ from backend.engine import (
     import_sample,
     import_trade_file,
     latest_upload,
+    mapping_groups,
     mappings,
     opportunity_detail,
     opportunities,
@@ -32,6 +33,7 @@ from backend.engine import (
     rows_to_xlsx_bytes,
     save_uploaded_file,
     seed_files,
+    update_mapping_group,
     update_mapping,
 )
 
@@ -114,6 +116,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/mappings/countries":
             self.send_json({"rows": mappings("countries")})
             return
+        if parsed.path == "/api/mapping-groups":
+            self.send_json(mapping_groups())
+            return
         self.send_error(404)
 
     def do_POST(self):
@@ -131,6 +136,17 @@ class Handler(BaseHTTPRequestHandler):
                     update_mapping(
                         body.get("kind", ""),
                         int(body.get("id", 0)),
+                        body.get("action", ""),
+                        body.get("value", ""),
+                    )
+                )
+                return
+            if parsed.path == "/api/mapping-group-action":
+                body = self.read_json()
+                self.send_json(
+                    update_mapping_group(
+                        body.get("kind", ""),
+                        body.get("ids", []),
                         body.get("action", ""),
                         body.get("value", ""),
                     )

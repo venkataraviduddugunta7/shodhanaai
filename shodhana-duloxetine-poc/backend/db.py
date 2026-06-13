@@ -150,9 +150,6 @@ def ensure_column(conn, table, column, definition):
 
 def reset_trade_data(conn):
     conn.execute("delete from generated_pitches")
-    conn.execute("delete from country_mappings")
-    conn.execute("delete from company_mappings")
-    conn.execute("delete from product_mappings")
     conn.execute("delete from clean_trade_records")
     conn.execute("delete from raw_trade_records")
     conn.execute("delete from uploaded_files")

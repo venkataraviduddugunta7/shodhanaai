@@ -136,23 +136,20 @@ def classify_product(description):
     if direct:
         return direct, 1.0, "Approved", "Exact mapping from product synonym master."
 
-    fuzzy_value, fuzzy_score = best_mapping_match(description, mapping)
-    if fuzzy_value and fuzzy_score >= 0.88:
-        return fuzzy_value, round(fuzzy_score, 2), "Pending", "Strong fuzzy match to product synonym master."
-    if fuzzy_value and fuzzy_score >= 0.72:
-        return fuzzy_value, round(fuzzy_score, 2), "Pending", "Weak fuzzy match to product synonym master; review before approval."
-
-    if "placebo" in simple and "pellet" in simple:
-        return "Duloxetine Placebo Pellets", 0.99, "Approved", "Exact rule match: contains placebo and pellet."
-
-    if (
-        "pellet" in simple
-        or "pellets" in simple
+    has_placebo = "placebo" in simple
+    has_pellet = (
+        re.search(r"\bpellets?\b", simple)
+        or re.search(r"\bpallets?\b", simple)
         or "delayed release" in simple
         or "ec pellet" in simple
         or "e c pellet" in simple
-    ):
-        return "Duloxetine Pellets", 0.95, "Approved", "Exact rule match: product description contains pellet terms."
+    )
+
+    if has_placebo and has_pellet:
+        return "Duloxetine Placebo Pellets", 0.99, "Approved", "Exact rule match: contains placebo and pellet."
+
+    if has_pellet:
+        return "Duloxetine Pellets", 0.95, "Approved", "Exact rule match: product description contains pellet/pallet terms."
 
     if (
         "duloxetine hcl" in simple
@@ -161,6 +158,14 @@ def classify_product(description):
         or "active pharmaceutical" in simple
     ):
         return "Duloxetine API", 0.95, "Approved", "Exact rule match: product description contains API/Duloxetine HCL terms."
+
+    fuzzy_value, fuzzy_score = best_mapping_match(description, mapping)
+    if fuzzy_value == "Duloxetine Placebo Pellets" and not has_placebo:
+        fuzzy_value = None
+    if fuzzy_value and fuzzy_score >= 0.88:
+        return fuzzy_value, round(fuzzy_score, 2), "Pending", "Strong fuzzy match to product synonym master."
+    if fuzzy_value and fuzzy_score >= 0.72:
+        return fuzzy_value, round(fuzzy_score, 2), "Pending", "Weak fuzzy match to product synonym master; review before approval."
 
     if "duloxetine" in simple:
         return "Other / Review Required", 0.45, "Pending", "Duloxetine found, but API/pellet/placebo pattern is unclear."

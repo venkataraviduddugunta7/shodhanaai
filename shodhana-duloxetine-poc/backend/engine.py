@@ -1,4 +1,5 @@
 import csv
+import difflib
 import hashlib
 import io
 import json
@@ -63,6 +64,9 @@ def seed_files():
             "Duloxetine Hcl Ec Pellets 17% W/W,Duloxetine Pellets,Pellet variant\n"
             "Duloxetine Ec Pellets 17% W/W,Duloxetine Pellets,Pellet variant\n"
             "Duloxetine Delayed Release Pellets 17.65% W/W,Duloxetine Pellets,Pellet variant\n"
+            "Duloxetine Hcl 22.4% Dr Pellets,Duloxetine Pellets,DR pellet variant\n"
+            "Duloxetine Hcl 22.4% Dr Pallets,Duloxetine Pellets,DR pellet typo variant\n"
+            "Duloxetine Hcl Dr Pallets,Duloxetine Pellets,DR pellet typo variant\n"
             "Duloxetine Hcl Placebo Pellets,Duloxetine Placebo Pellets,Placebo pellet variant\n",
             encoding="utf-8",
         )
@@ -144,10 +148,20 @@ def import_trade_file(path, original_name, replace=True):
     duplicate_keys = set()
     duplicate_count = 0
     raw_rows_to_insert = []
+    with connect() as conn:
+        approved_products = approved_product_map(conn)
+        approved_companies = approved_company_map(conn)
+        approved_countries = approved_country_map(conn)
 
     for index, row in enumerate(rows, start=1):
         raw_rows_to_insert.append((index, json.dumps(row)))
-        cleaned = clean_row(row, column_map)
+        cleaned = clean_row(
+            row,
+            column_map,
+            approved_products=approved_products,
+            approved_companies=approved_companies,
+            approved_countries=approved_countries,
+        )
         duplicate_key = cleaned["duplicate_key"]
         if duplicate_key in duplicate_keys:
             duplicate_count += 1
@@ -678,6 +692,93 @@ def mappings(kind, limit=5000):
     return rows_to_dicts(rows)
 
 
+def mapping_groups():
+    with connect() as conn:
+        products = rows_to_dicts(conn.execute("select * from product_mappings order by id asc").fetchall())
+        companies = rows_to_dicts(conn.execute("select * from company_mappings order by id asc").fetchall())
+        countries = rows_to_dicts(conn.execute("select * from country_mappings order by id asc").fetchall())
+    return {
+        "products": _mapping_groups_for_rows(
+            products,
+            "product",
+            "raw_product_description",
+            "suggested_standard_product",
+            "approved_standard_product",
+        ),
+        "companies": _mapping_groups_for_rows(
+            companies,
+            "company",
+            "raw_company_name",
+            "suggested_standard_company_name",
+            "approved_standard_company_name",
+            "source_roles",
+        ),
+        "countries": _mapping_groups_for_rows(
+            countries,
+            "country",
+            "raw_country_name",
+            "suggested_standard_country_name",
+            "approved_standard_country_name",
+            "source_roles",
+        ),
+    }
+
+
+def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_column, roles_column=""):
+    groups = {}
+    for row in rows:
+        standard = (row.get(approved_column) or row.get(suggested_column) or "").strip()
+        if not standard:
+            standard = "Review Required"
+        group_key = simple_key(standard)
+        group = groups.setdefault(
+            group_key,
+            {
+                "kind": kind,
+                "standard_value": standard,
+                "ids": [],
+                "samples": [],
+                "alias_count": 0,
+                "pending_count": 0,
+                "approved_count": 0,
+                "rejected_count": 0,
+                "min_confidence": 1.0,
+                "max_confidence": 0.0,
+                "source_roles": set(),
+            },
+        )
+        group["ids"].append(row["id"])
+        raw_value = row.get(raw_column, "")
+        if raw_value and len(group["samples"]) < 6:
+            group["samples"].append(raw_value)
+        group["alias_count"] += 1
+        status = row.get("status", "")
+        if status == "Approved":
+            group["approved_count"] += 1
+        elif status == "Rejected":
+            group["rejected_count"] += 1
+        else:
+            group["pending_count"] += 1
+        confidence = float(row.get("confidence_score") or 0)
+        group["min_confidence"] = min(group["min_confidence"], confidence)
+        group["max_confidence"] = max(group["max_confidence"], confidence)
+        if roles_column:
+            group["source_roles"].update(part.strip() for part in str(row.get(roles_column) or "").split(",") if part.strip())
+
+    result = []
+    for group in groups.values():
+        group["source_roles"] = ", ".join(sorted(group["source_roles"]))
+        result.append(group)
+    return sorted(
+        result,
+        key=lambda group: (
+            0 if group["pending_count"] else 1,
+            group["min_confidence"],
+            group["standard_value"],
+        ),
+    )
+
+
 def cleaning_review():
     with connect() as conn:
         summary = cleaning_summary(conn)
@@ -769,6 +870,52 @@ def update_mapping(kind, mapping_id, action, value=""):
             )
             status = "Approved"
         return {"id": mapping_id, "kind": kind, "status": status, "approved": approved}
+
+
+def update_mapping_group(kind, ids, action, value=""):
+    if action not in {"approve", "edit", "reject"}:
+        raise ValueError("Group action must be approve, edit, or reject.")
+    if not ids:
+        raise ValueError("Choose at least one mapping row.")
+    ids = [int(mapping_id) for mapping_id in ids]
+    config = {
+        "product": ("product_mappings", "suggested_standard_product", "approved_standard_product"),
+        "company": ("company_mappings", "suggested_standard_company_name", "approved_standard_company_name"),
+        "country": ("country_mappings", "suggested_standard_country_name", "approved_standard_country_name"),
+    }
+    if kind not in config:
+        raise ValueError("Mapping kind must be product, company, or country.")
+    table, suggested_column, approved_column = config[kind]
+    placeholders = ",".join("?" for _ in ids)
+    with connect() as conn:
+        rows = rows_to_dicts(conn.execute(f"select * from {table} where id in ({placeholders})", ids).fetchall())
+        if not rows:
+            raise ValueError("No mapping rows found for this group.")
+        if action == "reject":
+            conn.execute(
+                f"update {table} set status = 'Rejected', {approved_column} = '', reason_for_suggestion = ? where id in ({placeholders})",
+                ["Group rejected in Smart Confirm Review.", *ids],
+            )
+            return {"kind": kind, "status": "Rejected", "updated": len(rows), "approved": ""}
+
+        approved = (value or rows[0].get(approved_column) or rows[0].get(suggested_column) or "").strip()
+        if kind == "product" and approved not in STANDARD_PRODUCTS:
+            raise ValueError("Choose a valid standard product.")
+        if not approved:
+            raise ValueError("Approved group value cannot be blank.")
+        conn.execute(
+            f"""
+            update {table}
+            set status = 'Approved',
+                {suggested_column} = ?,
+                {approved_column} = ?,
+                confidence_score = case when confidence_score < 0.96 then 0.96 else confidence_score end,
+                reason_for_suggestion = ?
+            where id in ({placeholders})
+            """,
+            [approved, approved, "Group approved in Smart Confirm Review. This master mapping will be reused in future uploads.", *ids],
+        )
+    return {"kind": kind, "status": "Approved", "updated": len(rows), "approved": approved}
 
 
 def rerun_cleaning():
@@ -880,7 +1027,7 @@ def clean_row(row, column_map, approved_products=None, approved_companies=None, 
         standard_product = approved_products[product_key]
         product_confidence = 1.0
         product_status = "Approved"
-        product_reason = "Approved product mapping from Cleaning Review."
+        product_reason = "Approved product master reused from prior Cleaning Review."
     else:
         standard_product, product_confidence, product_status, product_reason = classify_product(product_raw)
     importer_raw = str(value("importer_name")).strip()
@@ -976,16 +1123,50 @@ def clean_row(row, column_map, approved_products=None, approved_companies=None, 
 
 
 def clean_company_name(raw_name, approved_companies):
-    direct = approved_companies.get(simple_key(raw_name)) or approved_companies.get(matching_company_key(raw_name))
+    direct, match_reason = _approved_company_lookup(raw_name, approved_companies)
     if direct:
-        return direct, 1.0, "Approved", "Approved company mapping from Cleaning Review."
+        return direct, 1.0, "Approved", match_reason
     return normalize_company(raw_name)
+
+
+def _approved_company_lookup(raw_name, approved_companies):
+    raw_simple = simple_key(raw_name)
+    raw_match = matching_company_key(raw_name)
+    direct = approved_companies.get(raw_simple) or approved_companies.get(raw_match)
+    if direct:
+        return direct, "Approved company master reused from prior Cleaning Review."
+
+    if len(raw_match) < 5:
+        return "", ""
+
+    best_value = ""
+    best_score = 0.0
+    for candidate_key, candidate_value in approved_companies.items():
+        candidate = candidate_key.strip()
+        if len(candidate) < 5:
+            continue
+        candidate_match = matching_company_key(candidate)
+        if not candidate_match:
+            candidate_match = candidate
+        contains_match = (
+            len(raw_match) >= 7
+            and len(candidate_match) >= 7
+            and (raw_match in candidate_match or candidate_match in raw_match)
+        )
+        score = 1.0 if contains_match else difflib.SequenceMatcher(None, raw_match, candidate_match).ratio()
+        if score > best_score:
+            best_score = score
+            best_value = candidate_value
+
+    if best_value and best_score >= 0.92:
+        return best_value, "Approved company master reused by strong similarity to prior approval."
+    return "", ""
 
 
 def clean_country_name(raw_country, approved_countries):
     direct = approved_countries.get(simple_key(raw_country))
     if direct:
-        return direct, 1.0, "Approved", "Approved country mapping from Cleaning Review."
+        return direct, 1.0, "Approved", "Approved country master reused from prior Cleaning Review."
     return normalize_country(raw_country)
 
 
@@ -1498,7 +1679,38 @@ def _price_range(conn):
 
 
 def _replace_product_mappings(conn, rows):
+    existing_by_key = _mapping_rows_by_key(conn, "product_mappings", "raw_product_description", simple_key)
     for row in rows:
+        existing = existing_by_key.get(simple_key(row["raw_product_description"]))
+        if existing:
+            suggested = row["suggested_standard_product"]
+            approved = row["approved_standard_product"]
+            status = row["status"]
+            confidence = row["confidence_score"]
+            reason = row.get("reason_for_suggestion", "")
+            if existing.get("status") == "Approved" and existing.get("approved_standard_product"):
+                suggested = existing["approved_standard_product"]
+                approved = existing["approved_standard_product"]
+                status = "Approved"
+                confidence = max(float(existing.get("confidence_score") or 0), float(confidence or 0), 0.96)
+                reason = "Approved product master retained and reused for this upload."
+            elif existing.get("status") == "Rejected":
+                approved = ""
+                status = "Rejected"
+                reason = existing.get("reason_for_suggestion") or "Rejected product mapping retained."
+            conn.execute(
+                """
+                update product_mappings
+                set suggested_standard_product = ?,
+                    confidence_score = ?,
+                    reason_for_suggestion = ?,
+                    approved_standard_product = ?,
+                    status = ?
+                where id = ?
+                """,
+                (suggested, confidence, reason, approved, status, existing["id"]),
+            )
+            continue
         conn.execute(
             """
             insert into product_mappings(
@@ -1519,7 +1731,40 @@ def _replace_product_mappings(conn, rows):
 
 
 def _replace_company_mappings(conn, rows):
+    existing_by_key = _mapping_rows_by_key(conn, "company_mappings", "raw_company_name", simple_key)
     for row in rows:
+        existing = existing_by_key.get(simple_key(row["raw_company_name"]))
+        if existing:
+            suggested = row["suggested_standard_company_name"]
+            approved = row["approved_standard_company_name"]
+            status = row["status"]
+            confidence = row["confidence_score"]
+            reason = row.get("reason_for_suggestion", "")
+            source_roles = _merge_roles(existing.get("source_roles", ""), row.get("source_roles", ""))
+            if existing.get("status") == "Approved" and existing.get("approved_standard_company_name"):
+                suggested = existing["approved_standard_company_name"]
+                approved = existing["approved_standard_company_name"]
+                status = "Approved"
+                confidence = max(float(existing.get("confidence_score") or 0), float(confidence or 0), 0.96)
+                reason = "Approved company master retained and reused for this upload."
+            elif existing.get("status") == "Rejected":
+                approved = ""
+                status = "Rejected"
+                reason = existing.get("reason_for_suggestion") or "Rejected company mapping retained."
+            conn.execute(
+                """
+                update company_mappings
+                set suggested_standard_company_name = ?,
+                    confidence_score = ?,
+                    reason_for_suggestion = ?,
+                    source_roles = ?,
+                    approved_standard_company_name = ?,
+                    status = ?
+                where id = ?
+                """,
+                (suggested, confidence, reason, source_roles, approved, status, existing["id"]),
+            )
+            continue
         conn.execute(
             """
             insert into company_mappings(
@@ -1541,7 +1786,40 @@ def _replace_company_mappings(conn, rows):
 
 
 def _replace_country_mappings(conn, rows):
+    existing_by_key = _mapping_rows_by_key(conn, "country_mappings", "raw_country_name", simple_key)
     for row in rows:
+        existing = existing_by_key.get(simple_key(row["raw_country_name"]))
+        if existing:
+            suggested = row["suggested_standard_country_name"]
+            approved = row["approved_standard_country_name"]
+            status = row["status"]
+            confidence = row["confidence_score"]
+            reason = row.get("reason_for_suggestion", "")
+            source_roles = _merge_roles(existing.get("source_roles", ""), row.get("source_roles", ""))
+            if existing.get("status") == "Approved" and existing.get("approved_standard_country_name"):
+                suggested = existing["approved_standard_country_name"]
+                approved = existing["approved_standard_country_name"]
+                status = "Approved"
+                confidence = max(float(existing.get("confidence_score") or 0), float(confidence or 0), 0.96)
+                reason = "Approved country master retained and reused for this upload."
+            elif existing.get("status") == "Rejected":
+                approved = ""
+                status = "Rejected"
+                reason = existing.get("reason_for_suggestion") or "Rejected country mapping retained."
+            conn.execute(
+                """
+                update country_mappings
+                set suggested_standard_country_name = ?,
+                    confidence_score = ?,
+                    reason_for_suggestion = ?,
+                    source_roles = ?,
+                    approved_standard_country_name = ?,
+                    status = ?
+                where id = ?
+                """,
+                (suggested, confidence, reason, source_roles, approved, status, existing["id"]),
+            )
+            continue
         conn.execute(
             """
             insert into country_mappings(
@@ -1560,6 +1838,32 @@ def _replace_country_mappings(conn, rows):
                 int(time.time()),
             ),
         )
+
+
+def _mapping_rows_by_key(conn, table, raw_column, key_func):
+    rows = conn.execute(f"select * from {table} order by id asc").fetchall()
+    by_key = {}
+    for row in rows:
+        row = dict(row)
+        key = key_func(row.get(raw_column, ""))
+        if not key:
+            continue
+        current = by_key.get(key)
+        if not current or _mapping_row_priority(row) > _mapping_row_priority(current):
+            by_key[key] = row
+    return by_key
+
+
+def _mapping_row_priority(row):
+    status_score = {"Approved": 3, "Pending": 2, "Rejected": 1}.get(row.get("status"), 0)
+    return (status_score, int(row.get("id") or 0))
+
+
+def _merge_roles(left, right):
+    roles = set()
+    for value in [left, right]:
+        roles.update(part.strip() for part in str(value or "").split(",") if part.strip())
+    return ", ".join(sorted(roles))
 
 
 def _merge_company_mapping(mapping_rows, role, raw_name, standard_name, confidence, status, reason):

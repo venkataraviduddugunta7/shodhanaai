@@ -10,13 +10,14 @@ The first demo proves:
 4. Normalize importer/exporter company names
 5. Convert quantity into KG where possible
 6. Calculate price per KG
-7. Review and approve/edit/reject product, company, and country mappings
-8. Re-run cleaning from raw records using approved mappings and club similar names
-9. Show a business dashboard for demand, suppliers, countries, price, and Shodhana/competitor supply
-10. Rank customer opportunities using quantity, recency, supplier, price, country market type, and data quality
-11. Open a customer opportunity detail page with shipment history, supplier history, price analysis, and recommended action
-12. Export cleaned data, opportunity rows, and dashboard summary
-13. Generate AI-assisted customer summary, pitch email, price strategy, and PPT outline
+7. Smart-confirm grouped product, company, and country mappings
+8. Save approved mappings as reusable SQLite master data
+9. Re-run cleaning from raw records using approved mappings and club similar names
+10. Show a business dashboard for demand, suppliers, countries, price, and Shodhana/competitor supply
+11. Rank customer opportunities using quantity, recency, supplier, price, country market type, and data quality
+12. Open a customer opportunity detail page with shipment history, supplier history, price analysis, and recommended action
+13. Export cleaned data, opportunity rows, and dashboard summary
+14. Generate AI-assisted customer summary, pitch email, price strategy, and PPT outline
 
 ## Run
 
@@ -55,7 +56,7 @@ Variable: SHODHANA_DATA_DIR=/app/persistent-data
 Upload Excel
 -> Initial Cleaning
 -> Cleaning Review
--> Approve/Edit mappings
+-> Smart Confirm mappings
 -> Re-run Cleaning
 -> Dashboard
 -> Opportunities
@@ -74,11 +75,26 @@ The Cleaning Review module is the manual-control layer before the final dashboar
 
 It shows:
 
+- Smart Confirm Mappings: grouped product, company, and country aliases that can be approved once at master level.
 - Product Mapping Review: raw product description, suggested standard product/category, confidence, reason, status, and Approve/Edit/Reject actions.
 - Company Mapping Review: raw importer/exporter name, suggested standard company name, confidence, role, status, and Approve/Edit/Reject actions.
 - Country Mapping Review: raw importer/exporter country name, suggested standard country name, confidence, role, status, and Approve/Edit/Reject actions.
 - Cleaning Summary: raw records, cleaned records, approved mappings, review-required records, valid KG rows, invalid units, price/kg rows, and missing value/quantity rows.
 - Manual review filters: pending mappings, low-confidence rows, review-required products, invalid units, and missing price/kg rows.
+
+### Smart Confirm Groups
+
+Use `Open Smart Confirm` when the user wants a faster top-level review.
+
+The system groups aliases by the suggested master value:
+
+- Product groups: for example multiple raw Duloxetine pellet descriptions under `Duloxetine Pellets`.
+- Company groups: importer/exporter spelling variants under one standard company name.
+- Country groups: country aliases under one standard country.
+
+The reviewer can confirm the whole group, edit the master value, or reject the group. `Approve Confident` approves high-confidence pending groups and immediately re-runs cleaning so the dashboard reflects the approved master mappings.
+
+Approved mappings stay in the SQLite database. On the next upload, the same raw name or a very strong normalized company match is applied automatically, so the team does not approve the same company/product/country again.
 
 ### How To Approve Mappings
 
@@ -132,6 +148,14 @@ Examples:
 - `Duloxetine EC Pellets 17%` and other pellet subcategory descriptions can be approved under `Duloxetine Pellets`.
 
 Pending suggestions are not treated as final master data. After the user approves or edits mappings, `Re-run Cleaning` applies the approved standards and clubs the records into one clean view for dashboard, opportunities, and pitch generation.
+
+The approved master data is stored in:
+
+- `product_mappings`
+- `company_mappings`
+- `country_mappings`
+
+These tables are not cleared when a new trade file is uploaded. New files reuse the approved master mappings and only ask for review when a genuinely new or low-confidence alias appears.
 
 ## Dashboard And Opportunity Engine
 

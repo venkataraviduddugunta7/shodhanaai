@@ -122,6 +122,20 @@
         <div class="panel">
           <div class="panel-head">
             <div>
+              <h3>Smart Confirm Mappings</h3>
+              <p>Confirm grouped product, company, and country aliases once. Approved master names are stored and reused for later uploads.</p>
+            </div>
+            <div class="button-row">
+              <button class="secondary tip" data-tooltip="Open a grouped confirmation view for product, company, and country master mappings." onclick="openSmartConfirmModal()">Open Smart Confirm</button>
+              <button class="ghost small tip" data-tooltip="Approve confident pending groups and then re-run cleaning from the approved master mappings." onclick="approveConfidentGroups(this)">Approve Confident</button>
+            </div>
+          </div>
+          <div id="smartConfirmCards" class="smart-grid"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
               <h3>Manual Review Filters</h3>
               <p>Use these to focus the review meeting on only the rows that need human judgment.</p>
             </div>
@@ -395,6 +409,23 @@
         <pre id="aiOutput" class="hidden">Ready.</pre>
       </section>
     </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="smartConfirmModal">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="smartConfirmTitle">
+      <div class="modal-head">
+        <div>
+          <h2 id="smartConfirmTitle">Smart Confirm Review</h2>
+          <p>Approve one group to club all listed raw aliases under the same master value.</p>
+        </div>
+        <button class="ghost small" onclick="closeSmartConfirmModal()">Close</button>
+      </div>
+      <div id="smartConfirmModalBody" class="smart-modal-body"></div>
+      <div class="modal-actions">
+        <button class="secondary tip" data-tooltip="Apply approved mappings to all raw trade records and refresh the dashboard." onclick="rerunCleaning(this)">Re-run Cleaning</button>
+        <button class="small" onclick="closeSmartConfirmModal()">Done</button>
+      </div>
+    </div>
   </div>
 
   <script src="/web/app.js"></script>

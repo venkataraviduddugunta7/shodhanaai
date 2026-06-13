@@ -4,6 +4,7 @@ let opportunityDetailData = null;
 let pitchData = null;
 let activeEmailTone = "formal";
 let reviewData = {summary: {}, products: [], companies: [], issue_rows: []};
+let mappingGroupData = {products: [], companies: [], countries: []};
 let reviewFilter = "pending";
 const STANDARD_PRODUCTS = [
   "Duloxetine API",
@@ -11,6 +12,11 @@ const STANDARD_PRODUCTS = [
   "Duloxetine Placebo Pellets",
   "Other / Review Required",
 ];
+const GROUP_KINDS = {
+  products: {kind: "product", label: "Product Groups"},
+  companies: {kind: "company", label: "Company Groups"},
+  countries: {kind: "country", label: "Country Groups"},
+};
 
 async function getJSON(path) {
   const response = await fetch(path);
@@ -162,8 +168,14 @@ async function loadDashboard() {
 }
 
 async function loadReview() {
-  reviewData = await getJSON("/api/cleaning-review");
+  const [review, groups] = await Promise.all([
+    getJSON("/api/cleaning-review"),
+    getJSON("/api/mapping-groups"),
+  ]);
+  reviewData = review;
+  mappingGroupData = groups;
   renderReviewSummary(reviewData.summary || {});
+  renderSmartConfirm(mappingGroupData);
   renderProductReview(reviewData.products || []);
   renderCompanyReview(reviewData.companies || []);
   renderCountryReview(reviewData.countries || []);
@@ -188,6 +200,144 @@ function renderReviewSummary(summary) {
     ["Duplicates Removed", summary.duplicates_removed],
   ];
   document.getElementById("reviewSummaryCards").innerHTML = cards.map(statCard).join("");
+}
+
+function renderSmartConfirm(groups) {
+  const container = document.getElementById("smartConfirmCards");
+  if (!container) return;
+  container.innerHTML = Object.entries(GROUP_KINDS).map(([key, meta]) => {
+    const rows = groups[key] || [];
+    const pending = rows.reduce((sum, group) => sum + Number(group.pending_count || 0), 0);
+    const approved = rows.reduce((sum, group) => sum + Number(group.approved_count || 0), 0);
+    const aliases = rows.reduce((sum, group) => sum + Number(group.alias_count || 0), 0);
+    return `<div class="smart-card">
+      <div>
+        <span>${esc(meta.label)}</span>
+        <strong>${num(rows.length)} master groups</strong>
+      </div>
+      <div class="smart-metrics">
+        <span>${num(aliases)} aliases</span>
+        <span>${num(pending)} pending</span>
+        <span>${num(approved)} approved</span>
+      </div>
+      <button class="small secondary" onclick="openSmartConfirmModal('${key}')">Review Groups</button>
+    </div>`;
+  }).join("");
+}
+
+function openSmartConfirmModal(activeKey = "") {
+  const modal = document.getElementById("smartConfirmModal");
+  const body = document.getElementById("smartConfirmModalBody");
+  const keys = activeKey ? [activeKey] : Object.keys(GROUP_KINDS);
+  body.innerHTML = keys.map((key) => smartConfirmSection(key, mappingGroupData[key] || [])).join("");
+  modal.classList.remove("hidden");
+}
+
+function closeSmartConfirmModal() {
+  document.getElementById("smartConfirmModal").classList.add("hidden");
+}
+
+function smartConfirmSection(key, groups) {
+  const meta = GROUP_KINDS[key];
+  if (!groups.length) {
+    return `<section class="smart-section"><h3>${esc(meta.label)}</h3><div class="empty">No mapping groups yet.</div></section>`;
+  }
+  return `<section class="smart-section">
+    <div class="smart-section-head">
+      <h3>${esc(meta.label)}</h3>
+      <span class="pill">${num(groups.length)} groups</span>
+    </div>
+    <div class="smart-group-list">
+      ${groups.map((group, index) => smartConfirmGroup(key, group, index)).join("")}
+    </div>
+  </section>`;
+}
+
+function smartConfirmGroup(key, group, index) {
+  const inputId = `smart-${key}-${index}`;
+  const pending = Number(group.pending_count || 0);
+  const confidence = `${percent(group.min_confidence)}-${percent(group.max_confidence)}`;
+  const samples = (group.samples || []).map((sample) => `<li>${esc(sample)}</li>`).join("");
+  return `<div class="smart-group">
+    <div class="smart-group-main">
+      <span class="eyebrow">${pending ? `${num(pending)} pending` : "Confirmed"}</span>
+      ${smartGroupValueControl(key, inputId, group.standard_value)}
+      <div class="smart-metrics">
+        <span>${num(group.alias_count)} aliases</span>
+        <span>${confidence}</span>
+        ${group.source_roles ? `<span>${esc(group.source_roles)}</span>` : ""}
+      </div>
+      <ul class="sample-list">${samples}</ul>
+    </div>
+    <div class="smart-group-actions">
+      <button class="small" onclick="mappingGroupAction('${key}', ${index}, 'approve')">Confirm Group</button>
+      <button class="small secondary" onclick="mappingGroupAction('${key}', ${index}, 'edit')">Save Edited</button>
+      <button class="small ghost" onclick="mappingGroupAction('${key}', ${index}, 'reject')">Reject</button>
+    </div>
+  </div>`;
+}
+
+function smartGroupValueControl(key, inputId, value) {
+  if (key === "products") {
+    return `<select class="smart-value" id="${inputId}">
+      ${STANDARD_PRODUCTS.map((option) => `<option value="${esc(option)}" ${option === value ? "selected" : ""}>${esc(option)}</option>`).join("")}
+    </select>`;
+  }
+  return `<input class="smart-value" id="${inputId}" value="${esc(value)}">`;
+}
+
+async function mappingGroupAction(key, index, action, silent = false) {
+  const group = (mappingGroupData[key] || [])[index];
+  if (!group) return;
+  const input = document.getElementById(`smart-${key}-${index}`);
+  const value = input ? input.value.trim() : group.standard_value;
+  try {
+    const result = await postJSON("/api/mapping-group-action", {
+      kind: GROUP_KINDS[key].kind,
+      ids: group.ids,
+      action,
+      value,
+    });
+    if (!silent) setStatus(`${result.updated} ${GROUP_KINDS[key].kind} mappings ${result.status.toLowerCase()} as ${result.approved || "rejected"}.`);
+    await loadReview();
+    await loadMappings();
+    if (!document.getElementById("smartConfirmModal").classList.contains("hidden")) openSmartConfirmModal(key);
+  } catch (error) {
+    setStatus(error.message || String(error), true);
+  }
+}
+
+async function approveConfidentGroups(button) {
+  await withBusy(button, "Approving", async () => {
+    let updated = 0;
+    for (const key of Object.keys(GROUP_KINDS)) {
+      const groups = mappingGroupData[key] || [];
+      for (let index = 0; index < groups.length; index += 1) {
+        const group = groups[index];
+        const pending = Number(group.pending_count || 0);
+        const minConfidence = Number(group.min_confidence || 0);
+        const reviewRequired = String(group.standard_value || "").toLowerCase().includes("review required");
+        if (pending && minConfidence >= 0.9 && !reviewRequired) {
+          await postJSON("/api/mapping-group-action", {
+            kind: GROUP_KINDS[key].kind,
+            ids: group.ids,
+            action: "approve",
+            value: group.standard_value,
+          });
+          updated += Number(group.alias_count || 0);
+        }
+      }
+    }
+    if (updated) {
+      const rerun = await postJSON("/api/rerun-cleaning", {});
+      await refreshAll();
+      setStatus(`Approved ${updated} confident aliases and regenerated ${rerun.clean_rows} clean rows.`);
+    } else {
+      await loadReview();
+      await loadMappings();
+      setStatus("No confident pending groups found.");
+    }
+  });
 }
 
 function renderDashboardCards(stats) {
@@ -905,10 +1055,14 @@ function productSelect(id, value) {
 async function mappingAction(kind, id, action) {
   const valueEl = document.getElementById(`${kind}-map-${id}`);
   const value = valueEl ? valueEl.value.trim() : "";
-  const result = await postJSON("/api/mapping-action", {kind, id, action, value});
-  setStatus(`${result.kind} mapping ${result.status.toLowerCase()}.`);
-  await loadReview();
-  await loadMappings();
+  try {
+    const result = await postJSON("/api/mapping-action", {kind, id, action, value});
+    setStatus(`${result.kind} mapping ${result.status.toLowerCase()}. Re-run cleaning to apply it.`);
+    await loadReview();
+    await loadMappings();
+  } catch (error) {
+    setStatus(error.message || String(error), true);
+  }
 }
 
 async function rerunCleaning(button) {
