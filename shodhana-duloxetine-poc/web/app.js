@@ -7,6 +7,8 @@ let reviewData = {summary: {}, products: [], companies: [], issue_rows: []};
 let mappingGroupData = {products: [], companies: [], countries: []};
 let reviewFilter = "pending";
 let mappingsNeedRerun = localStorage.getItem("shodhanaMappingsNeedRerun") === "1";
+let activeSmartConfirmKey = "";
+let showConfirmedGroups = false;
 const STANDARD_PRODUCTS = [
   "Duloxetine API",
   "Duloxetine Pellets 17%",
@@ -101,6 +103,27 @@ function renderProductOptionDatalist() {
   datalist.innerHTML = STANDARD_PRODUCTS.map((option) => `<option value="${esc(option)}"></option>`).join("");
 }
 
+function renderGroupOptionDatalists() {
+  const configs = [
+    ["productGroupOptions", "products"],
+    ["companyGroupOptions", "companies"],
+    ["countryGroupOptions", "countries"],
+  ];
+  configs.forEach(([id, key]) => {
+    const datalist = document.getElementById(id);
+    if (!datalist) return;
+    const values = new Set(key === "products" ? STANDARD_PRODUCTS : []);
+    (mappingGroupData[key] || []).forEach((group) => {
+      const value = String(group.standard_value || "").trim();
+      if (value && !isRemainingMappingGroup(group)) values.add(value);
+    });
+    datalist.innerHTML = Array.from(values)
+      .sort((left, right) => left.localeCompare(right))
+      .map((option) => `<option value="${esc(option)}"></option>`)
+      .join("");
+  });
+}
+
 function dashboardFilters(prefix = "dash") {
   return {
     product_category: document.getElementById(`${prefix}Product`)?.value || "",
@@ -187,6 +210,7 @@ async function loadReview() {
   ]);
   reviewData = review;
   mappingGroupData = groups;
+  renderGroupOptionDatalists();
   renderReviewSummary(reviewData.summary || {});
   renderSmartConfirm(mappingGroupData);
   renderProductReview(reviewData.products || []);
@@ -233,21 +257,48 @@ function renderSmartConfirm(groups) {
         <span>${num(needsConfirm)} need confirm</span>
         <span>${num(approved)} approved</span>
       </div>
-      <button class="small secondary" onclick="openSmartConfirmModal('${key}')">Review Groups</button>
+      <div class="smart-card-actions">
+        <button class="small secondary" onclick="openSmartConfirmModal('${key}', false)">Review Pending</button>
+        <button class="small ghost" onclick="openSmartConfirmModal('${key}', true)">Manage Groups</button>
+      </div>
     </div>`;
   }).join("");
 }
 
-function openSmartConfirmModal(activeKey = "") {
+function openSmartConfirmModal(activeKey = "", manageMode = showConfirmedGroups) {
+  activeSmartConfirmKey = activeKey;
+  showConfirmedGroups = Boolean(manageMode);
   const modal = document.getElementById("smartConfirmModal");
-  const body = document.getElementById("smartConfirmModalBody");
-  const keys = activeKey ? [activeKey] : Object.keys(GROUP_KINDS);
-  body.innerHTML = keys.map((key) => smartConfirmSection(key, mappingGroupData[key] || [])).join("");
+  renderSmartConfirmModalBody();
   modal.classList.remove("hidden");
 }
 
 function closeSmartConfirmModal() {
   document.getElementById("smartConfirmModal").classList.add("hidden");
+}
+
+function renderSmartConfirmModalBody() {
+  const body = document.getElementById("smartConfirmModalBody");
+  const keys = activeSmartConfirmKey ? [activeSmartConfirmKey] : Object.keys(GROUP_KINDS);
+  const modeLabel = showConfirmedGroups ? "Manage all groups" : "Review pending groups";
+  body.innerHTML = `<div class="smart-toolbar">
+    <div>
+      <span class="eyebrow">${esc(modeLabel)}</span>
+      <p>${showConfirmedGroups
+        ? "Edit confirmed mapping groups, rename the master value, or uncheck aliases to move them into Remaining / Create New Mapping."
+        : "Only groups still needing confirmation are shown. Confirm clean groups, or uncheck wrong aliases to split them."}</p>
+    </div>
+    <div class="button-row">
+      <button class="${showConfirmedGroups ? "secondary" : ""} small" onclick="setSmartConfirmMode(false)">Review Pending</button>
+      <button class="${showConfirmedGroups ? "" : "secondary"} small" onclick="setSmartConfirmMode(true)">Manage Groups</button>
+    </div>
+  </div>
+  ${keys.map((key) => smartConfirmSection(key, mappingGroupData[key] || [])).join("")}`;
+}
+
+function setSmartConfirmMode(manageMode) {
+  showConfirmedGroups = Boolean(manageMode);
+  renderSmartConfirmModalBody();
 }
 
 function smartConfirmSection(key, groups) {
