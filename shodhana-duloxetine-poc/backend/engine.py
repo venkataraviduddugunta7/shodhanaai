@@ -407,6 +407,10 @@ def import_trade_file(path, original_name, replace=True):
 
     quality = quality_summary(rows, cleaned_rows, duplicate_count)
     _cluster_company_mappings(company_mapping_rows)
+    _apply_company_clusters_to_cleaned_rows(cleaned_rows, company_mapping_rows)
+    cleaned_rows, cluster_duplicate_count = _dedupe_cleaned_rows(cleaned_rows)
+    duplicate_count += cluster_duplicate_count
+    quality = quality_summary(rows, cleaned_rows, duplicate_count)
     with connect() as conn:
         if replace:
             reset_trade_data(conn)
@@ -679,6 +683,7 @@ def mapping_review_status(groups=None):
     groups = groups or mapping_groups()
     result = {
         "requires_review": False,
+        "blocking": False,
         "total_groups": 0,
         "total_aliases": 0,
         "by_kind": {},
@@ -1562,6 +1567,62 @@ def clean_row(row, column_map, approved_products=None, approved_companies=None, 
         "duplicate_key": duplicate_key,
         "data_status": data_status,
     }
+
+
+def _apply_company_clusters_to_cleaned_rows(cleaned_rows, company_mapping_rows):
+    suggestions = {
+        simple_key(row.get("raw_company_name")): row
+        for row in company_mapping_rows.values()
+        if simple_key(row.get("raw_company_name"))
+    }
+    for cleaned in cleaned_rows:
+        for prefix in ["importer", "exporter"]:
+            raw_key = simple_key(cleaned.get(f"raw_{prefix}_name"))
+            mapping = suggestions.get(raw_key)
+            suggested = (mapping or {}).get("suggested_standard_company_name", "")
+            if not suggested or simple_key(suggested) == simple_key(REMAINING_MAPPING_VALUE):
+                continue
+            if simple_key(suggested) in {"UNKNOWN", "TO THE ORDER OF"}:
+                continue
+            cleaned[f"standard_{prefix}_name"] = suggested
+            cleaned[f"{prefix}_confidence"] = max(float(cleaned.get(f"{prefix}_confidence") or 0), float((mapping or {}).get("confidence_score") or 0), 0.84)
+            cleaned[f"{prefix}_status"] = "Approved"
+            cleaned[f"{prefix}_reason"] = "Automatic company alias cluster applied by cleanup engine."
+        cleaned["duplicate_key"] = _duplicate_key_for_cleaned(cleaned)
+
+
+def _dedupe_cleaned_rows(cleaned_rows):
+    seen = set()
+    result = []
+    duplicates = 0
+    for cleaned in cleaned_rows:
+        key = cleaned.get("duplicate_key", "")
+        if key in seen:
+            duplicates += 1
+            continue
+        seen.add(key)
+        result.append(cleaned)
+    return result, duplicates
+
+
+def _duplicate_key_for_cleaned(cleaned):
+    duplicate_product = cleaned["standard_product"] if cleaned["product_status"] == "Approved" else cleaned["raw_product_description"]
+    duplicate_importer = cleaned["standard_importer_name"] if cleaned["importer_status"] == "Approved" else cleaned["raw_importer_name"]
+    duplicate_exporter = cleaned["standard_exporter_name"] if cleaned["exporter_status"] == "Approved" else cleaned["raw_exporter_name"]
+    duplicate_importer_country = cleaned["importer_country"] if cleaned["importer_country_status"] == "Approved" else cleaned["raw_importer_country"]
+    duplicate_exporter_country = cleaned["exporter_country"] if cleaned["exporter_country_status"] == "Approved" else cleaned["raw_exporter_country"]
+    return "|".join(
+        [
+            str(cleaned.get("shipment_date") or "").lower(),
+            simple_key(duplicate_product),
+            simple_key(duplicate_importer),
+            simple_key(duplicate_exporter),
+            simple_key(duplicate_importer_country),
+            simple_key(duplicate_exporter_country),
+            str(round(cleaned.get("quantity_kg") or 0, 6)),
+            str(round(cleaned.get("value_usd") or 0, 4)),
+        ]
+    )
 
 
 def clean_company_name(raw_name, approved_companies):

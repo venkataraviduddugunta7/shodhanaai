@@ -1,6 +1,6 @@
 # Shodhana Engine - Duloxetine Trade Intelligence
 
-Sales-ready Duloxetine trade intelligence engine for uploading market files, normalizing messy trade data, confirming reusable master mappings, ranking opportunities, and preparing customer pitch material.
+Sales-ready Duloxetine growth engine for uploading market files, normalizing messy trade data automatically, ranking customer opportunities, and preparing customer pitch material.
 
 The engine supports:
 
@@ -10,9 +10,9 @@ The engine supports:
 4. Normalize importer/exporter company names
 5. Convert quantity into KG where possible
 6. Calculate price per KG
-7. Smart-confirm grouped product, company, and country mappings
-8. Save approved mappings as reusable SQLite master configuration
-9. Apply configuration from raw records using approved mappings and club similar names
+7. Automatically club grouped product, company, and country aliases
+8. Keep optional reusable master mappings for admin refinement
+9. Show opportunities immediately after upload
 10. Show a business dashboard for demand, suppliers, countries, price, and Shodhana/competitor supply
 11. Rank customer opportunities using quantity, recency, supplier, price, country market type, and data quality
 12. Open a customer opportunity detail page with shipment history, supplier history, price analysis, and recommended action
@@ -54,13 +54,9 @@ Variable: SHODHANA_DATA_DIR=/app/persistent-data
 
 ```text
 Upload Excel
--> Initial Cleaning
--> Review & Configuration
--> Smart Confirm mappings
--> Apply Config
--> Dashboard
 -> Opportunities
 -> Pitch
+-> Dashboard
 ```
 
 The browser supports `/cleaning-review` directly:
@@ -69,9 +65,11 @@ The browser supports `/cleaning-review` directly:
 http://127.0.0.1:8010/cleaning-review
 ```
 
-## Review & Configuration
+## Optional Admin Review
 
-The Review & Configuration module is the manual-control layer before the final dashboard and opportunity engine.
+The main user flow does not require mapping confirmation. Uploading a trade file processes data and opens opportunities directly.
+
+The `/cleaning-review` page remains as an optional admin layer for refining mappings, saving defaults, or correcting edge cases.
 
 It shows:
 
@@ -171,7 +169,7 @@ Pending suggestions are not treated as final master data. After the user approve
 
 The opportunity engine groups rows by the approved master importer name. It also shows how many raw company names were clubbed and lists those aliases in the opportunity detail view. Supplier history is grouped by the approved master exporter name with its raw aliases visible.
 
-The Opportunities page is gated by mapping readiness. If grouped company/product/country aliases still need confirmation, the page shows a \`Mapping Review Required\` panel instead of raw opportunity rows. This prevents variants such as \`EVA PHARMA\`, \`EVA PHARMA FOR PHARMACEUTICALS\`, and \`EVA PHARMA INDUSTRY\` from appearing as separate targets before the reviewer confirms the master company.
+The Opportunities page is not gated by mapping review. Automatic normalization is applied immediately so sales users can move from Excel to ranked customers and pitch generation without a manual cleanup meeting.
 
 Single trusted values do not create review work. For example, a normal country value like \`Brazil\` is treated as already clean; only new aliases or fuzzy matches such as \`US America\` against an existing \`United States\` master are sent to confirmation.
 

@@ -24,10 +24,9 @@
   <div class="shell">
     <nav class="sidebar">
       <button class="nav-item active" data-page="upload" onclick="showPage('upload')">Intake</button>
-      <button class="nav-item" data-page="review" onclick="showPage('review')">Review & Config</button>
-      <button class="nav-item" data-page="dashboard" onclick="showPage('dashboard')">Dashboard</button>
       <button class="nav-item" data-page="opportunities" onclick="showPage('opportunities')">Opportunities</button>
       <button class="nav-item" data-page="pitch" onclick="showPage('pitch')">Pitch</button>
+      <button class="nav-item" data-page="dashboard" onclick="showPage('dashboard')">Dashboard</button>
     </nav>
 
     <main class="content">
@@ -46,8 +45,8 @@
 
         <div class="engine-strip">
           <div><span>1</span><strong>Upload file</strong><em>Excel, CSV, or mapping master</em></div>
-          <div><span>2</span><strong>AI cleanup</strong><em>Companies, products, countries</em></div>
-          <div><span>3</span><strong>Apply decisions</strong><em>Only review exceptions</em></div>
+          <div><span>2</span><strong>Process data</strong><em>Products, companies, countries</em></div>
+          <div><span>3</span><strong>Rank customers</strong><em>By product and market signal</em></div>
           <div><span>4</span><strong>Pitch customers</strong><em>Ranked opportunity workspace</em></div>
         </div>
 
@@ -58,13 +57,7 @@
               <span class="step">1</span>
             </div>
             <div class="form-grid">
-              <label for="sourceType">Source type</label>
-              <select id="sourceType">
-                <option value="trade_data">Trade data Excel/CSV</option>
-                <option value="product_mapping">Product synonym master</option>
-                <option value="company_mapping">Company synonym master</option>
-                <option value="country_mapping">Country synonym master</option>
-              </select>
+              <input id="sourceType" type="hidden" value="trade_data">
 
               <label for="uploadFile">File</label>
               <input id="uploadFile" type="file" accept=".xlsx,.csv">
@@ -86,8 +79,8 @@
               <div class="agent-orbit">
                 <span></span><span></span><span></span>
               </div>
-              <strong>Waiting for a trade file</strong>
-              <p>The cleanup agent will prepare product, company, and country mappings before opportunities are shown.</p>
+              <strong>Waiting for market data</strong>
+              <p>Processed customer opportunities will open automatically.</p>
             </div>
           </div>
         </div>
@@ -303,8 +296,8 @@
       <section class="page" id="page-opportunities">
         <div class="page-head">
           <div>
-            <h2>Opportunity Engine</h2>
-            <p>Ranked customers with market price comparison, scoring reasons, and pitch actions.</p>
+            <h2>Customer Opportunities</h2>
+            <p>Ranked buyers by product category, volume, recency, supplier signal, and price benchmark.</p>
           </div>
           <div class="button-row">
             <button class="ghost small tip" data-tooltip="Download the filtered opportunity table as XLSX." onclick="downloadExport('opportunities', 'opportunity')">Export XLSX</button>
@@ -330,7 +323,7 @@
         </div>
         <div class="panel">
           <div class="panel-head">
-            <h3>Ranked Opportunities</h3>
+            <h3>Ranked Customers</h3>
             <span class="pill" id="opportunityCount">0 rows</span>
           </div>
           <div id="opportunityTable" class="table-wrap tall"></div>

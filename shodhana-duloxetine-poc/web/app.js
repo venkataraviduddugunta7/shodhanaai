@@ -64,8 +64,8 @@ async function importSample(button) {
     markMappingsClean();
     renderImportResult(result);
     await refreshAll();
-    setStatus(`Initial cleanup prepared: ${result.clean_rows} clean rows, ${result.duplicates_removed} duplicates removed.`);
-    showPage("review");
+    setStatus(`Ready: ${result.clean_rows} rows processed, ${result.duplicates_removed} duplicates removed.`);
+    showPage("opportunities");
   });
 }
 
@@ -87,8 +87,8 @@ async function uploadFile(button) {
     renderImportResult(result);
     await refreshAll();
     const count = result.clean_rows || result.rows || 0;
-    setStatus(`Processed ${count} rows from ${file.name}.`);
-    if (sourceType === "trade_data") showPage("review");
+    setStatus(`Ready: ${count} rows processed from ${file.name}.`);
+    if (sourceType === "trade_data") showPage("opportunities");
   });
 }
 
@@ -114,27 +114,23 @@ function renderUploadSummary(result) {
   container.classList.remove("hidden");
   container.classList.add("has-result");
   const rows = [
-    ["Product groups", summary.products?.groups, summary.products?.needs_confirmation],
-    ["Company groups", summary.companies?.groups, summary.companies?.needs_confirmation],
-    ["Country groups", summary.countries?.groups, summary.countries?.needs_confirmation],
+    ["Products", summary.products?.groups],
+    ["Companies", summary.companies?.groups],
+    ["Countries", summary.countries?.groups],
   ];
   container.innerHTML = `<div class="upload-summary-head">
-    <span class="eyebrow">Intake Result</span>
+    <span class="eyebrow">Processed</span>
     <strong>${num(result.clean_rows || result.rows || 0)} clean rows</strong>
     <em>${num(result.duplicates_removed || 0)} duplicates removed</em>
   </div>
   <div class="upload-summary-grid">
-    ${rows.map(([label, groups, pending]) => `<div>
+    ${rows.map(([label, groups]) => `<div>
       <span>${esc(label)}</span>
       <strong>${num(groups)}</strong>
-      <em>${num(pending)} need confirm</em>
+      <em>normalized groups</em>
     </div>`).join("")}
   </div>
-  <div class="upload-next ${readiness.requires_review ? "needs-review" : ""}">
-    ${readiness.requires_review
-      ? `Confirm ${num(readiness.total_aliases || 0)} aliases before using opportunities.`
-      : "Mappings are ready. Apply config if you changed anything, then open Dashboard or Opportunities."}
-  </div>`;
+  <div class="upload-next">Opportunities are ready.</div>`;
 }
 
 function renderProductOptionDatalist() {
@@ -884,19 +880,6 @@ function renderCustomers(rows) {
 
 async function loadOpportunities() {
   const data = await getJSON(`/api/opportunities?${opportunityQuery()}`);
-  const readiness = data.mapping_readiness || {};
-  if (readiness.requires_review) {
-    opportunityRows = [];
-    document.getElementById("opportunityCount").textContent = "Mapping review required";
-    renderOpportunityReviewGate(readiness);
-    return;
-  }
-  if (mappingsNeedRerun) {
-    opportunityRows = [];
-    document.getElementById("opportunityCount").textContent = "Re-run cleaning required";
-    renderOpportunityRerunGate();
-    return;
-  }
   opportunityRows = data.rows || [];
   document.getElementById("opportunityCount").textContent = `${opportunityRows.length} rows`;
   renderOpportunities(opportunityRows);
@@ -916,13 +899,12 @@ function renderOpportunityRerunGate() {
   const container = document.getElementById("opportunityTable");
   container.innerHTML = `<div class="review-gate">
     <div>
-      <span class="eyebrow">Cleaning Re-run Required</span>
-      <h3>Apply saved configuration before viewing opportunities</h3>
-      <p>Your product, company, or country mappings were saved quickly. Apply the configuration once after review to rebuild dashboard and opportunity results from the raw upload.</p>
+      <span class="eyebrow">Processing Required</span>
+      <h3>Refresh opportunities</h3>
+      <p>Run the processing step again to rebuild the latest customer ranking.</p>
     </div>
     <div class="button-row">
-      <button onclick="showPage('review')">Go to Cleaning Review</button>
-      <button class="secondary" onclick="rerunCleaning(this)">Apply Config</button>
+      <button class="secondary" onclick="rerunCleaning(this, 'opportunities')">Refresh</button>
     </div>
   </div>`;
 }
@@ -933,9 +915,9 @@ function renderOpportunityReviewGate(readiness) {
   const counts = readiness.by_kind || {};
   container.innerHTML = `<div class="review-gate">
     <div>
-      <span class="eyebrow">Mapping Review Required</span>
-      <h3>Confirm master mappings before using opportunities</h3>
-      <p>There are ${num(readiness.total_groups || 0)} grouped mapping suggestions with ${num(readiness.total_aliases || 0)} aliases waiting for confirmation. Opportunities are hidden until the mapping layer is clean, so EVA PHARMA-style variants do not appear as separate customers.</p>
+      <span class="eyebrow">Data Notes</span>
+      <h3>Opportunities are available</h3>
+      <p>${num(readiness.total_aliases || 0)} aliases can be refined later. Rankings are shown now using automatic normalization.</p>
     </div>
     <div class="smart-metrics">
       <span>Products ${num(counts.products?.groups || 0)}</span>
@@ -950,8 +932,7 @@ function renderOpportunityReviewGate(readiness) {
       </div>`).join("")}
     </div>
     <div class="button-row">
-      <button onclick="showPage('review'); setTimeout(() => openSmartConfirmModal(), 0)">Open Mapping Review</button>
-      <button class="secondary" onclick="showPage('review')">Go to Cleaning Review</button>
+      <button onclick="showPage('opportunities')">View Opportunities</button>
     </div>
   </div>`;
 }

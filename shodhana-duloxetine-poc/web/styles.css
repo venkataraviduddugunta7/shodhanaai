@@ -365,7 +365,8 @@ th, td {
   border-bottom: 1px solid var(--line);
   text-align: left;
   vertical-align: top;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 th {
   position: sticky;
@@ -375,7 +376,46 @@ th {
   color: #50615c;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: .06em;
+  letter-spacing: 0;
+}
+
+#opportunityTable table {
+  min-width: 1680px;
+}
+#opportunityTable th,
+#opportunityTable td {
+  min-width: 90px;
+}
+#opportunityTable th:first-child,
+#opportunityTable td:first-child {
+  min-width: 54px;
+}
+#opportunityTable th:nth-child(2),
+#opportunityTable td:nth-child(2) {
+  min-width: 180px;
+}
+#opportunityTable th:nth-child(4),
+#opportunityTable td:nth-child(4),
+#opportunityTable th:nth-child(5),
+#opportunityTable td:nth-child(5),
+#opportunityTable th:nth-child(15),
+#opportunityTable td:nth-child(15) {
+  min-width: 180px;
+}
+#opportunityTable th:nth-child(16),
+#opportunityTable td:nth-child(16) {
+  min-width: 240px;
+}
+#opportunityTable th:last-child,
+#opportunityTable td:last-child {
+  position: sticky;
+  right: 0;
+  background: rgba(255, 255, 255, .94);
+  z-index: 2;
+  box-shadow: -12px 0 22px rgba(47, 66, 94, .08);
+}
+#opportunityTable th:last-child {
+  z-index: 3;
 }
 td strong { color: #14251f; }
 .muted { color: var(--muted); }
@@ -652,7 +692,7 @@ td strong { color: #14251f; }
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: .04em;
+  letter-spacing: 0;
 }
 .smart-card strong {
   display: block;
