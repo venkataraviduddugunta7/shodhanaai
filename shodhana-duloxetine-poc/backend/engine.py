@@ -930,7 +930,7 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
         if kind == "company" and simple_key(standard) in {"TO THE ORDER OF", "UNKNOWN"}:
             group_key = simple_key(standard)
         elif kind == "company" and not approved_value:
-            group_key = matching_company_key(raw_value) or simple_key(suggested_value) or simple_key(standard)
+            group_key = simple_key(suggested_value) or matching_company_key(raw_value) or simple_key(standard)
         else:
             group_key = simple_key(standard)
         group = groups.setdefault(
@@ -1012,13 +1012,7 @@ def _best_text_canonical(values):
     values = [simple_key(value) for value in values if simple_key(value)]
     if not values:
         return "UNKNOWN"
-
-    def score(name):
-        has_private = 1 if "PRIVATE LIMITED" in name else 0
-        has_limited = 1 if "LIMITED" in name else 0
-        return (has_private, has_limited, len(name))
-
-    return max(values, key=score)
+    return max(values, key=_company_name_quality)
 
 
 def cleaning_review():
@@ -2245,9 +2239,9 @@ def _is_generic_country_value(value):
 
 def _cluster_company_mappings(mapping_rows):
     groups = {}
-    for key, row in mapping_rows.items():
-        cluster_key = matching_company_key(row.get("raw_company_name", ""))
-        if len(cluster_key) < 3 or cluster_key in {"TO ORDER", "UNKNOWN"}:
+    for row in mapping_rows.values():
+        cluster_key = _company_anchor_key(row.get("raw_company_name", ""))
+        if not cluster_key:
             continue
         groups.setdefault(cluster_key, []).append(row)
 
@@ -2271,12 +2265,46 @@ def _cluster_company_mappings(mapping_rows):
 
 
 def _best_company_canonical(rows):
+    approved = [
+        simple_key(row.get("approved_standard_company_name"))
+        for row in rows
+        if row.get("status") == "Approved" and simple_key(row.get("approved_standard_company_name"))
+    ]
+    if approved:
+        return max(approved, key=_company_name_quality)
     names = [simple_key(row.get("suggested_standard_company_name") or row.get("raw_company_name")) for row in rows]
-    def score(name):
-        has_private = 1 if "PRIVATE LIMITED" in name else 0
-        has_limited = 1 if "LIMITED" in name else 0
-        return (has_private, has_limited, len(name))
-    return max(names, key=score) if names else "UNKNOWN"
+    return max(names, key=_company_name_quality) if names else "UNKNOWN"
+
+
+def _company_anchor_key(value):
+    core = matching_company_key(value)
+    if not core:
+        return ""
+    first = core.split()[0]
+    if (
+        len(first) < 3
+        or first.isdigit()
+        or first in {"UNKNOWN", "ORDER", "INTERNATIONAL", "GLOBAL", "TRADING", "ENTERPRISES"}
+    ):
+        return core
+    return first
+
+
+def _company_name_quality(name):
+    name = simple_key(name)
+    address_terms = {
+        "STREET", "ROAD", "AVENUE", "BUILDING", "FLOOR", "DISTRICT", "PYRAMIDS",
+        "GIZA", "EGYPT", "PIN", "ZIP", "PO", "BOX",
+    }
+    words = name.split()
+    noisy = sum(1 for word in words if word in address_terms or any(char.isdigit() for char in word))
+    legal_strength = (
+        2 if "PRIVATE LIMITED" in name else
+        1 if any(word in words for word in {"LIMITED", "LTD", "SA", "SAE", "GMBH", "INC", "LLP"}) else
+        0
+    )
+    useful_length = min(len(name), 100)
+    return (-noisy, legal_strength, useful_length, -len(name))
 
 
 def analytics_where(filters, extra_clauses=None):
