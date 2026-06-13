@@ -2142,6 +2142,7 @@ def _merge_country_mapping(mapping_rows, role, raw_name, standard_name, confiden
     key = simple_key(raw_name)
     if not key or key in {"N A", "NA", "NONE", "UNKNOWN", "NOT AVAILABLE"}:
         key = "N/A"
+    is_master = 1 if _is_trusted_country_mapping(status, reason) else 0
     if key not in mapping_rows:
         mapping_rows[key] = {
             "raw_country_name": raw_name or "N/A",
@@ -2151,6 +2152,7 @@ def _merge_country_mapping(mapping_rows, role, raw_name, standard_name, confiden
             "source_roles": role,
             "approved_standard_country_name": standard_name if status == "Approved" else "",
             "status": status,
+            "is_master": is_master,
         }
         return
     current = mapping_rows[key]
@@ -2163,6 +2165,14 @@ def _merge_country_mapping(mapping_rows, role, raw_name, standard_name, confiden
         current["reason_for_suggestion"] = reason
         current["approved_standard_country_name"] = standard_name if status == "Approved" else current.get("approved_standard_country_name", "")
         current["status"] = status if current["status"] != "Approved" else current["status"]
+        current["is_master"] = max(int(current.get("is_master") or 0), is_master)
+
+
+def _is_trusted_country_mapping(status, reason):
+    if status != "Approved":
+        return False
+    reason = str(reason or "").lower()
+    return "exact country alias" in reason or "trusted country master" in reason
 
 
 def _cluster_company_mappings(mapping_rows):
