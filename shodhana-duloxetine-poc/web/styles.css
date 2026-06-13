@@ -315,6 +315,11 @@ td strong { color: #14251f; }
   color: #14251f;
   font-size: 18px;
 }
+.smart-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .smart-metrics {
   display: flex;
   flex-wrap: wrap;
@@ -373,6 +378,21 @@ td strong { color: #14251f; }
   padding: 18px 20px;
   display: grid;
   gap: 20px;
+}
+.smart-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+}
+.smart-toolbar p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
 }
 .smart-section {
   display: grid;
@@ -676,6 +696,7 @@ td strong { color: #14251f; }
   .filters { grid-template-columns: 1fr; }
   .action-grid { grid-template-columns: 1fr 1fr; }
   .smart-group { grid-template-columns: 1fr; }
+  .smart-toolbar { flex-direction: column; }
   .modal-backdrop { padding: 10px; }
   .modal-head, .modal-actions { flex-direction: column; align-items: stretch; }
   .ppt-outline { grid-template-columns: 1fr; }
