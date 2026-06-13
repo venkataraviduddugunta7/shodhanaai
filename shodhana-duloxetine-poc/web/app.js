@@ -344,15 +344,19 @@ function smartConfirmGroup(key, group, index) {
   const needsConfirm = groupNeedsConfirm(group);
   const confidence = `${percent(group.min_confidence)}-${percent(group.max_confidence)}`;
   const isRemaining = isRemainingMappingGroup(group);
+  const isConfirmedGroup = !isRemaining && needsConfirm === 0;
   const actions = isRemaining
     ? `<button class="small" onclick="mappingGroupAction('${key}', ${index}, 'edit')">Save New Mapping</button>
        <button class="small ghost" onclick="mappingGroupAction('${key}', ${index}, 'reject')">Reject</button>`
+    : isConfirmedGroup
+      ? `<button class="small" onclick="mappingGroupAction('${key}', ${index}, 'edit')">Save Group</button>
+         <button class="small ghost" onclick="mappingGroupAction('${key}', ${index}, 'reject')">Reject</button>`
     : `<button class="small" onclick="mappingGroupAction('${key}', ${index}, 'approve')">Confirm Group</button>
        <button class="small secondary" onclick="mappingGroupAction('${key}', ${index}, 'edit')">Save Edited</button>
        <button class="small ghost" onclick="mappingGroupAction('${key}', ${index}, 'reject')">Reject</button>`;
   return `<div class="smart-group">
     <div class="smart-group-main">
-      <span class="eyebrow">${isRemaining ? "Create new mapping" : needsConfirm ? `${num(needsConfirm)} need confirm` : "Confirmed"}</span>
+      <span class="eyebrow">${isRemaining ? "Create new mapping" : needsConfirm ? `${num(needsConfirm)} need confirm` : "Current group"}</span>
       ${smartGroupValueControl(key, inputId, group.standard_value)}
       <div class="smart-metrics">
         <span>${num(group.alias_count)} aliases</span>
