@@ -3,6 +3,7 @@ import json
 import mimetypes
 import os
 import sys
+import threading
 from email import policy
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +16,7 @@ from backend.db import init_db
 from backend.engine import (
     cleaning_review,
     clean_records_for_export,
+    cleanup_agent_plan,
     dashboard,
     dashboard_summary_rows,
     generated_pitch,
@@ -40,6 +42,17 @@ from backend.engine import (
     update_mapping,
 )
 
+WRITE_POST_PATHS = {
+    "/api/import-sample",
+    "/api/upload",
+    "/api/mapping-action",
+    "/api/mapping-group-action",
+    "/api/rerun-cleaning",
+    "/api/sync-master-mappings",
+    "/api/pitch/regenerate",
+}
+POST_WRITE_LOCK = threading.RLock()
+
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -61,6 +74,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/cleaning-review":
             self.send_json(cleaning_review())
+            return
+        if parsed.path == "/api/cleanup-agent":
+            self.send_json(cleanup_agent_plan())
             return
         if parsed.path == "/api/review-records":
             query = parse_qs(parsed.query)
@@ -130,55 +146,62 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         try:
-            if parsed.path == "/api/import-sample":
-                self.send_json(import_sample())
+            if parsed.path in WRITE_POST_PATHS:
+                with POST_WRITE_LOCK:
+                    self.dispatch_post(parsed)
                 return
-            if parsed.path == "/api/upload":
-                self.handle_upload()
-                return
-            if parsed.path == "/api/mapping-action":
-                body = self.read_json()
-                self.send_json(
-                    update_mapping(
-                        body.get("kind", ""),
-                        int(body.get("id", 0)),
-                        body.get("action", ""),
-                        body.get("value", ""),
-                    )
-                )
-                return
-            if parsed.path == "/api/mapping-group-action":
-                body = self.read_json()
-                self.send_json(
-                    update_mapping_group(
-                        body.get("kind", ""),
-                        body.get("ids", []),
-                        body.get("action", ""),
-                        body.get("value", ""),
-                        body.get("excluded_ids", []),
-                    )
-                )
-                return
-            if parsed.path == "/api/rerun-cleaning":
-                self.send_json(rerun_cleaning())
-                return
-            if parsed.path == "/api/sync-master-mappings":
-                self.send_json(sync_master_mappings_to_seed())
-                return
-            if parsed.path == "/api/ai-action":
-                body = self.read_json()
-                self.send_json({"content": generate_ai_action(body.get("action", "pitch"), body.get("opportunity", {}))})
-                return
-            if parsed.path == "/api/pitch/regenerate":
-                body = self.read_json()
-                try:
-                    self.send_json(generated_pitch(body.get("id", ""), regenerate=True))
-                except ValueError as exc:
-                    self.send_json({"error": str(exc)}, status=404)
-                return
-            self.send_error(404)
+            self.dispatch_post(parsed)
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=500)
+
+    def dispatch_post(self, parsed):
+        if parsed.path == "/api/import-sample":
+            self.send_json(import_sample())
+            return
+        if parsed.path == "/api/upload":
+            self.handle_upload()
+            return
+        if parsed.path == "/api/mapping-action":
+            body = self.read_json()
+            self.send_json(
+                update_mapping(
+                    body.get("kind", ""),
+                    int(body.get("id", 0)),
+                    body.get("action", ""),
+                    body.get("value", ""),
+                )
+            )
+            return
+        if parsed.path == "/api/mapping-group-action":
+            body = self.read_json()
+            self.send_json(
+                update_mapping_group(
+                    body.get("kind", ""),
+                    body.get("ids", []),
+                    body.get("action", ""),
+                    body.get("value", ""),
+                    body.get("excluded_ids", []),
+                )
+            )
+            return
+        if parsed.path == "/api/rerun-cleaning":
+            self.send_json(rerun_cleaning())
+            return
+        if parsed.path == "/api/sync-master-mappings":
+            self.send_json(sync_master_mappings_to_seed())
+            return
+        if parsed.path == "/api/ai-action":
+            body = self.read_json()
+            self.send_json({"content": generate_ai_action(body.get("action", "pitch"), body.get("opportunity", {}))})
+            return
+        if parsed.path == "/api/pitch/regenerate":
+            body = self.read_json()
+            try:
+                self.send_json(generated_pitch(body.get("id", ""), regenerate=True))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, status=404)
+            return
+        self.send_error(404)
 
     def handle_upload(self):
         fields, files = self.read_multipart()

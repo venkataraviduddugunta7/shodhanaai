@@ -1,15 +1,36 @@
 import json
+import os
 import sqlite3
+import threading
 import time
 
 from .config import DB_PATH, ensure_dirs
 
+SQLITE_TIMEOUT_SECONDS = int(os.environ.get("SHODHANA_SQLITE_TIMEOUT_SECONDS", "30"))
+_WAL_LOCK = threading.Lock()
+_WAL_ENABLED = False
+
 
 def connect():
     ensure_dirs()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"pragma busy_timeout = {SQLITE_TIMEOUT_SECONDS * 1000}")
+    conn.execute("pragma foreign_keys = on")
+    conn.execute("pragma synchronous = normal")
+    _enable_wal(conn)
     return conn
+
+
+def _enable_wal(conn):
+    global _WAL_ENABLED
+    if _WAL_ENABLED:
+        return
+    with _WAL_LOCK:
+        if _WAL_ENABLED:
+            return
+        conn.execute("pragma journal_mode = wal")
+        _WAL_ENABLED = True
 
 
 def init_db():

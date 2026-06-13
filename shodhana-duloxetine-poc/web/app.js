@@ -5,10 +5,12 @@ let pitchData = null;
 let activeEmailTone = "formal";
 let reviewData = {summary: {}, products: [], companies: [], issue_rows: []};
 let mappingGroupData = {products: [], companies: [], countries: []};
+let cleanupAgentData = null;
 let reviewFilter = "pending";
 let mappingsNeedRerun = localStorage.getItem("shodhanaMappingsNeedRerun") === "1";
 let activeSmartConfirmKey = "";
 let showConfirmedGroups = false;
+let mappingWriteInFlight = false;
 const STANDARD_PRODUCTS = [
   "Duloxetine API",
   "Duloxetine Pellets 17%",
@@ -62,7 +64,7 @@ async function importSample(button) {
     markMappingsClean();
     renderImportResult(result);
     await refreshAll();
-    setStatus(`Initial cleaning complete: ${result.clean_rows} clean rows, ${result.duplicates_removed} duplicates removed. Review mappings next.`);
+    setStatus(`Initial cleanup prepared: ${result.clean_rows} clean rows, ${result.duplicates_removed} duplicates removed.`);
     showPage("review");
   });
 }
@@ -105,10 +107,12 @@ function renderUploadSummary(result) {
   const readiness = result.mapping_readiness || {};
   if (!Object.keys(summary).length) {
     container.classList.add("hidden");
+    container.classList.remove("has-result");
     container.innerHTML = "";
     return;
   }
   container.classList.remove("hidden");
+  container.classList.add("has-result");
   const rows = [
     ["Product groups", summary.products?.groups, summary.products?.needs_confirmation],
     ["Company groups", summary.companies?.groups, summary.companies?.needs_confirmation],
@@ -240,19 +244,114 @@ async function loadDashboard() {
 }
 
 async function loadReview() {
-  const [review, groups] = await Promise.all([
+  const [review, groups, agent] = await Promise.all([
     getJSON("/api/cleaning-review"),
     getJSON("/api/mapping-groups"),
+    getJSON("/api/cleanup-agent"),
   ]);
   reviewData = review;
   mappingGroupData = groups;
+  cleanupAgentData = agent;
   renderGroupOptionDatalists();
   renderReviewSummary(reviewData.summary || {});
+  renderCleanupAgent(cleanupAgentData || {});
   renderSmartConfirm(mappingGroupData);
   renderProductReview(reviewData.products || []);
   renderCompanyReview(reviewData.companies || []);
   renderCountryReview(reviewData.countries || []);
   renderIssueRows(reviewData.issue_rows || []);
+}
+
+function renderCleanupAgent(plan) {
+  const container = document.getElementById("cleanupAgentPanel");
+  if (!container) return;
+  const summary = plan.summary || {};
+  const lanes = plan.lanes || [];
+  const decisionAliases = Number(summary.decision_aliases || 0);
+  const safeAliases = Number(summary.safe_aliases || 0);
+  const readiness = plan.readiness || {};
+  const state = decisionAliases
+    ? "Needs Review"
+    : safeAliases
+      ? "Safe Matches Ready"
+      : readiness.requires_review
+        ? "Review Required"
+        : "Ready";
+  container.innerHTML = `
+    <div class="agent-hero-card">
+      <div class="agent-identity">
+        <div class="agent-glyph"><span></span></div>
+        <div>
+          <span class="eyebrow">AI Cleanup Agent</span>
+          <h3>${esc(state)}</h3>
+          <p>${esc(agentStateCopy(plan))}</p>
+        </div>
+      </div>
+      <div class="agent-kpis">
+        ${agentKpi("Clean rows", summary.cleaned_records)}
+        ${agentKpi("Auto-safe aliases", safeAliases)}
+        ${agentKpi("Human decisions", decisionAliases)}
+        ${agentKpi("Quality flags", summary.quality_issues)}
+      </div>
+      <div class="button-row">
+        <button class="secondary" onclick="runCleanupAutopilot(this)">Auto-clean Safe Matches</button>
+        <button onclick="openSmartConfirmModal('', false)">Review Exceptions</button>
+        <button class="ghost" onclick="applyConfigAndOpen(this, 'opportunities')">Apply & Continue</button>
+      </div>
+    </div>
+    <div class="agent-lanes">
+      ${lanes.map(agentLaneCard).join("")}
+    </div>
+  `;
+}
+
+function agentStateCopy(plan) {
+  const summary = plan.summary || {};
+  if (Number(summary.decision_aliases || 0)) {
+    return `${num(summary.decision_aliases)} aliases need review before opportunities are unlocked.`;
+  }
+  if (Number(summary.safe_aliases || 0)) {
+    return `${num(summary.safe_aliases)} confident aliases can be approved automatically.`;
+  }
+  return "Cleanup is ready. Apply the latest configuration and continue to ranked customers.";
+}
+
+function agentKpi(label, value) {
+  return `<div><span>${esc(label)}</span><strong>${formatValue(value)}</strong></div>`;
+}
+
+function agentLaneCard(lane) {
+  const examples = lane.examples || [];
+  const status = Number(lane.decision_aliases || 0)
+    ? `${num(lane.decision_aliases)} decisions`
+    : Number(lane.safe_aliases || 0)
+      ? `${num(lane.safe_aliases)} safe`
+      : "ready";
+  return `<div class="agent-lane">
+    <div class="agent-lane-head">
+      <span>${esc(lane.label)}</span>
+      <strong>${esc(status)}</strong>
+    </div>
+    <div class="agent-progress">
+      <span style="width:${agentLaneWidth(lane)}%"></span>
+    </div>
+    <div class="agent-lane-metrics">
+      <span>${num(lane.total_groups)} groups</span>
+      <span>${num(lane.confirmed_aliases)} confirmed</span>
+      <span>${num(lane.safe_groups)} auto-safe</span>
+    </div>
+    ${examples.length ? `<div class="agent-examples">
+      ${examples.map((item) => `<button class="ghost small" onclick="openSmartConfirmModal('${esc(lane.key)}', false)" title="${esc((item.samples || []).join(" · "))}">
+        ${esc(item.standard_value || "Review group")}
+      </button>`).join("")}
+    </div>` : `<div class="agent-clear">No visible exceptions</div>`}
+  </div>`;
+}
+
+function agentLaneWidth(lane) {
+  const total = Math.max(1, Number(lane.total_aliases || 0));
+  const done = Number(lane.confirmed_aliases || 0) + Number(lane.safe_aliases || 0);
+  return Math.max(8, Math.min(100, (done / total) * 100));
 }
 
 function renderReviewSummary(summary) {
@@ -519,6 +618,10 @@ function isRemainingMappingGroup(group) {
 }
 
 async function mappingGroupAction(key, index, action, silent = false) {
+  if (mappingWriteInFlight) {
+    if (!silent) setStatus("Still saving the previous mapping change. Please wait a moment.");
+    return;
+  }
   const group = (mappingGroupData[key] || [])[index];
   if (!group) return;
   const input = document.getElementById(`smart-${key}-${index}`);
@@ -528,6 +631,8 @@ async function mappingGroupAction(key, index, action, silent = false) {
     setStatus("Select at least one alias before saving this group.", true);
     return;
   }
+  mappingWriteInFlight = true;
+  setMappingButtonsDisabled(true);
   try {
     const wasOpen = !document.getElementById("smartConfirmModal").classList.contains("hidden");
     const result = await postJSON("/api/mapping-group-action", {
@@ -546,41 +651,59 @@ async function mappingGroupAction(key, index, action, silent = false) {
     }
   } catch (error) {
     setStatus(error.message || String(error), true);
+  } finally {
+    mappingWriteInFlight = false;
+    setMappingButtonsDisabled(false);
   }
 }
 
 async function approveConfidentGroups(button) {
   await withBusy(button, "Approving", async () => {
+    if (mappingWriteInFlight) {
+      setStatus("Still saving the previous mapping change. Please wait a moment.", true);
+      return;
+    }
+    mappingWriteInFlight = true;
+    setMappingButtonsDisabled(true);
     let updated = 0;
-    for (const key of Object.keys(GROUP_KINDS)) {
+    try {
+      for (const key of Object.keys(GROUP_KINDS)) {
         const groups = mappingGroupData[key] || [];
-      for (let index = 0; index < groups.length; index += 1) {
-        const group = groups[index];
-        const needsConfirm = groupNeedsConfirm(group);
-        const minConfidence = Number(group.min_confidence || 0);
-        const reviewRequired = String(group.standard_value || "").toLowerCase().includes("review required");
-        if (needsConfirm && minConfidence >= 0.9 && !reviewRequired && !isGenericMappingGroup(group)) {
-          const ids = confirmableGroupIds(group);
-          await postJSON("/api/mapping-group-action", {
-            kind: GROUP_KINDS[key].kind,
-            ids,
-            action: "approve",
-            value: group.standard_value,
-          });
-          updated += ids.length;
+        for (let index = 0; index < groups.length; index += 1) {
+          const group = groups[index];
+          const needsConfirm = groupNeedsConfirm(group);
+          const minConfidence = Number(group.min_confidence || 0);
+          const reviewRequired = String(group.standard_value || "").toLowerCase().includes("review required");
+          if (needsConfirm && minConfidence >= 0.9 && !reviewRequired && !isGenericMappingGroup(group)) {
+            const ids = confirmableGroupIds(group);
+            await postJSON("/api/mapping-group-action", {
+              kind: GROUP_KINDS[key].kind,
+              ids,
+              action: "approve",
+              value: group.standard_value,
+            });
+            updated += ids.length;
+          }
         }
       }
-    }
-    if (updated) {
-      markMappingsDirty();
-      await Promise.all([loadReview(), loadMappings(), loadOpportunities()]);
-      setStatus(`Approved ${updated} confident aliases. Click Re-run Cleaning once when mapping review is finished.`);
-    } else {
-      await loadReview();
-      await loadMappings();
-      setStatus("No confident pending groups found.");
+      if (updated) {
+        markMappingsDirty();
+        await Promise.all([loadReview(), loadMappings(), loadOpportunities()]);
+        setStatus(`Auto-cleaned ${updated} confident aliases. Apply cleanup when ready.`);
+      } else {
+        await loadReview();
+        await loadMappings();
+        setStatus("No confident pending groups found.");
+      }
+    } finally {
+      mappingWriteInFlight = false;
+      setMappingButtonsDisabled(false);
     }
   });
+}
+
+async function runCleanupAutopilot(button) {
+  await approveConfidentGroups(button);
 }
 
 async function syncMasterMappings(button) {
@@ -1394,29 +1517,50 @@ function productSelect(id, value) {
 }
 
 async function mappingAction(kind, id, action) {
+  if (mappingWriteInFlight) {
+    setStatus("Still saving the previous mapping change. Please wait a moment.", true);
+    return;
+  }
   const valueEl = document.getElementById(`${kind}-map-${id}`);
   const value = valueEl ? valueEl.value.trim() : "";
+  mappingWriteInFlight = true;
+  setMappingButtonsDisabled(true);
   try {
     const result = await postJSON("/api/mapping-action", {kind, id, action, value});
     markMappingsDirty();
-    setStatus(`${result.kind} mapping ${result.status.toLowerCase()}. Click Re-run Cleaning once when mapping review is finished.`);
+    setStatus(`${result.kind} mapping ${result.status.toLowerCase()}. Apply cleanup when review is finished.`);
     await Promise.all([loadReview(), loadMappings(), loadOpportunities()]);
   } catch (error) {
     setStatus(error.message || String(error), true);
+  } finally {
+    mappingWriteInFlight = false;
+    setMappingButtonsDisabled(false);
   }
 }
 
-async function rerunCleaning(button) {
-  await withBusy(button, "Re-running", async () => {
+function setMappingButtonsDisabled(disabled) {
+  document.querySelectorAll(".smart-group-actions button, .mapping-actions button").forEach((button) => {
+    button.disabled = Boolean(disabled);
+  });
+}
+
+async function rerunCleaning(button, nextPage = "dashboard") {
+  await withBusy(button, "Applying", async () => {
     const result = await postJSON("/api/rerun-cleaning", {});
     markMappingsClean();
     setStatus(`Configuration applied: ${result.clean_rows} rows regenerated, ${result.duplicates_removed} duplicates removed.`);
     await refreshAll();
-    showPage("dashboard");
+    showPage(nextPage);
   });
 }
 
+async function applyConfigAndOpen(button, page) {
+  await rerunCleaning(button, page || "opportunities");
+}
+
 function scrollToMappingTables() {
+  const details = document.getElementById("advancedConfig");
+  if (details) details.open = true;
   const target = document.getElementById("productReviewTable");
   if (target) target.scrollIntoView({behavior: "smooth", block: "start"});
 }

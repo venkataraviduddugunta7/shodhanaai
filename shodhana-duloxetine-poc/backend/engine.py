@@ -710,6 +710,87 @@ def mapping_review_status(groups=None):
     return result
 
 
+def cleanup_agent_plan():
+    groups = mapping_groups()
+    readiness = mapping_review_status(groups)
+    with connect() as conn:
+        summary = cleaning_summary(conn)
+
+    lanes = []
+    for key, label in [
+        ("products", "Products"),
+        ("companies", "Companies"),
+        ("countries", "Countries"),
+    ]:
+        lane_groups = groups.get(key, [])
+        pending = [group for group in lane_groups if int(group.get("needs_review_count") or 0) > 0]
+        safe = [group for group in pending if _is_safe_agent_group(group)]
+        decisions = [group for group in pending if group not in safe and not _is_generic_review_group(group)]
+        lanes.append(
+            {
+                "key": key,
+                "label": label,
+                "total_groups": len(lane_groups),
+                "total_aliases": sum(int(group.get("alias_count") or 0) for group in lane_groups),
+                "safe_groups": len(safe),
+                "safe_aliases": sum(int(group.get("needs_review_count") or 0) for group in safe),
+                "decision_groups": len(decisions),
+                "decision_aliases": sum(int(group.get("needs_review_count") or 0) for group in decisions),
+                "confirmed_aliases": sum(int(group.get("approved_count") or 0) for group in lane_groups),
+                "examples": [_agent_group_preview(group) for group in decisions[:4]],
+            }
+        )
+
+    safe_aliases = sum(lane["safe_aliases"] for lane in lanes)
+    decision_aliases = sum(lane["decision_aliases"] for lane in lanes)
+    quality_issues = int(summary.get("review_required_records") or 0) + int(summary.get("invalid_qty_records") or 0)
+    if decision_aliases:
+        next_action = "review_exceptions"
+    elif safe_aliases:
+        next_action = "auto_clean"
+    else:
+        next_action = "apply_and_continue"
+
+    return {
+        "mode": "deterministic_agent",
+        "ai_ready": True,
+        "next_action": next_action,
+        "readiness": readiness,
+        "summary": {
+            "total_records": int(summary.get("total_raw_records") or summary.get("total_records") or 0),
+            "cleaned_records": int(summary.get("cleaned_records") or summary.get("clean_records") or 0),
+            "safe_aliases": safe_aliases,
+            "decision_aliases": decision_aliases,
+            "quality_issues": quality_issues,
+            "duplicates_removed": int(summary.get("duplicates_removed") or 0),
+        },
+        "lanes": lanes,
+        "plugin_contract": {
+            "input": ["raw_trade_records", "product_mappings", "company_mappings", "country_mappings"],
+            "output": ["approved_aliases", "exception_aliases", "confidence", "reason"],
+        },
+    }
+
+
+def _is_safe_agent_group(group):
+    if _is_generic_review_group(group):
+        return False
+    value = simple_key(group.get("standard_value", ""))
+    if "REVIEW REQUIRED" in value or value == simple_key(REMAINING_MAPPING_VALUE):
+        return False
+    return int(group.get("needs_review_count") or 0) > 0 and float(group.get("min_confidence") or 0) >= 0.9
+
+
+def _agent_group_preview(group):
+    return {
+        "standard_value": group.get("standard_value", ""),
+        "aliases": int(group.get("alias_count") or 0),
+        "needs_review": int(group.get("needs_review_count") or 0),
+        "confidence": round(float(group.get("min_confidence") or 0), 2),
+        "samples": (group.get("samples") or [])[:3],
+    }
+
+
 def upload_intake_summary():
     groups = mapping_groups()
     summary = {

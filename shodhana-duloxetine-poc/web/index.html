@@ -32,24 +32,29 @@
 
     <main class="content">
       <section class="page active" id="page-upload">
-        <div class="page-head">
+        <div class="page-head liquid-hero">
           <div>
-            <h2>Trade Data Intake</h2>
-            <p>Upload Excel/CSV data once, then let the engine normalize products, companies, countries, and sales opportunities.</p>
+            <span class="eyebrow">Trade Intelligence</span>
+            <h2>From Excel to customer pitch</h2>
+            <p>Import market data, clean aliases, rank customers, and generate sales-ready pitch material.</p>
+          </div>
+          <div class="hero-signal">
+            <span>Engine Path</span>
+            <strong>Intake → Cleanup → Opportunities</strong>
           </div>
         </div>
 
         <div class="engine-strip">
           <div><span>1</span><strong>Upload file</strong><em>Excel, CSV, or mapping master</em></div>
-          <div><span>2</span><strong>Normalize aliases</strong><em>Company, product, country groups</em></div>
-          <div><span>3</span><strong>Confirm config</strong><em>Save reusable master mappings</em></div>
+          <div><span>2</span><strong>AI cleanup</strong><em>Companies, products, countries</em></div>
+          <div><span>3</span><strong>Apply decisions</strong><em>Only review exceptions</em></div>
           <div><span>4</span><strong>Pitch customers</strong><em>Ranked opportunity workspace</em></div>
         </div>
 
-        <div class="grid two">
+        <div class="grid two intake-grid">
           <div class="panel">
             <div class="panel-head">
-              <h3>File Intake</h3>
+              <h3>Import Data</h3>
               <span class="step">1</span>
             </div>
             <div class="form-grid">
@@ -70,114 +75,113 @@
               </div>
             </div>
             <div class="status" id="statusLine">Ready.</div>
-            <div id="uploadSummary" class="upload-summary hidden"></div>
           </div>
 
-          <div class="panel">
+          <div class="panel agent-card">
             <div class="panel-head">
-              <h3>Detected Columns</h3>
-              <span class="step">2</span>
+              <h3>Cleanup Agent</h3>
+              <span class="step">Ready</span>
             </div>
-            <div id="columnMap" class="code-box">No upload yet.</div>
+            <div id="uploadSummary" class="upload-summary">
+              <div class="agent-orbit">
+                <span></span><span></span><span></span>
+              </div>
+              <strong>Waiting for a trade file</strong>
+              <p>The cleanup agent will prepare product, company, and country mappings before opportunities are shown.</p>
+            </div>
           </div>
         </div>
 
-        <div class="panel">
-          <div class="panel-head">
-            <h3>Engine Flow</h3>
-            <span class="step">Live</span>
-          </div>
-          <div class="flow">
-            <div>Upload Excel</div>
-            <div>Extract Fields</div>
-            <div>Group Aliases</div>
-            <div>Confirm Masters</div>
-            <div>Apply Config</div>
-            <div>Rank Buyers</div>
-            <div>Pitch</div>
-          </div>
-        </div>
+        <details class="advanced-config technical-details">
+          <summary>Technical Intake Details</summary>
+          <div id="columnMap" class="code-box">No upload yet.</div>
+        </details>
       </section>
 
       <section class="page" id="page-review">
-        <div class="page-head">
+        <div class="page-head liquid-hero">
           <div>
-            <h2>Review & Configuration</h2>
-            <p>Confirm product, company, and country groups once. Future uploads reuse these master mappings automatically.</p>
+            <span class="eyebrow">Cleanup Agent</span>
+            <h2>Review only what matters</h2>
+            <p>Safe matches are prepared automatically. Exceptions stay visible, cleanup is applied, and ranked customers open next.</p>
           </div>
           <div class="button-row">
-            <button class="secondary tip" data-tooltip="Reprocess raw records using approved product, company, and country mappings and rebuild dashboard/opportunities." onclick="rerunCleaning(this)">Apply Config</button>
-            <button class="ghost small tip" data-tooltip="Open the final dashboard after review." onclick="showPage('dashboard')">Dashboard</button>
+            <button class="secondary tip" data-tooltip="Approve high-confidence product, company, and country matches." onclick="runCleanupAutopilot(this)">Auto-clean Safe Matches</button>
+            <button class="tip" data-tooltip="Apply approved cleanup decisions and open ranked opportunities." onclick="applyConfigAndOpen(this, 'opportunities')">Apply & Continue</button>
           </div>
         </div>
 
-        <div class="stats-grid" id="reviewSummaryCards"></div>
+        <div id="cleanupAgentPanel" class="cleanup-agent"></div>
 
         <div class="panel">
           <div class="panel-head">
             <div>
-              <h3>Master Mapping Config</h3>
-              <p>Confirm grouped product, company, and country aliases once. Approved master names are stored and reused for later uploads.</p>
+              <h3>Exception Review</h3>
+              <p>Open only the groups that need human confirmation or edits.</p>
             </div>
             <div class="button-row">
-              <button class="secondary tip" data-tooltip="Open a grouped confirmation view for product, company, and country master mappings." onclick="openSmartConfirmModal()">Open Smart Confirm</button>
-              <button class="ghost small tip" data-tooltip="Approve confident pending groups and then re-run cleaning from the approved master mappings." onclick="approveConfidentGroups(this)">Approve Confident</button>
+              <button class="secondary tip" data-tooltip="Open a simplified grouped review for product, company, and country exceptions." onclick="openSmartConfirmModal('', false)">Review Exceptions</button>
               <button class="ghost small tip" data-tooltip="Save confirmed master mappings into default seed CSV files so fresh deployments can load the same knowledge." onclick="syncMasterMappings(this)">Save Defaults</button>
-              <button class="ghost small tip" data-tooltip="Open the detailed mapping tables below for row-level edits." onclick="scrollToMappingTables()">Mapping Tables</button>
+              <button class="ghost small tip" data-tooltip="Open detailed mapping tables for operations/admin review." onclick="scrollToMappingTables()">Advanced</button>
             </div>
           </div>
           <div id="smartConfirmCards" class="smart-grid"></div>
         </div>
 
-        <div class="panel">
-          <div class="panel-head">
-            <div>
-              <h3>Manual Review Filters</h3>
-              <p>Use these to focus the review meeting on only the rows that need human judgment.</p>
-            </div>
-          </div>
-          <div class="button-row filter-row">
-            <button class="ghost small" onclick="setReviewFilter('pending')">Pending mappings</button>
-            <button class="ghost small" onclick="setReviewFilter('low_confidence')">Low confidence</button>
-            <button class="ghost small" onclick="setReviewFilter('review_products')">Review products</button>
-            <button class="ghost small" onclick="setReviewFilter('invalid_units')">Invalid units</button>
-            <button class="ghost small" onclick="setReviewFilter('missing_price')">Missing price/kg</button>
-          </div>
-          <div id="reviewIssueTable" class="table-wrap"></div>
-        </div>
+        <details class="advanced-config" id="advancedConfig">
+          <summary>Advanced Data Room</summary>
+          <div class="stats-grid" id="reviewSummaryCards"></div>
 
-        <div class="panel">
-          <div class="panel-head">
-            <div>
-              <h3>Product Mapping Review</h3>
-              <p>Raw product descriptions and subcategory variants are clubbed into API, pellets, placebo pellets, or review required.</p>
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Manual Review Filters</h3>
+                <p>Operational filters for data-quality checks.</p>
+              </div>
             </div>
-            <span class="pill" id="productReviewCount">0 rows</span>
+            <div class="button-row filter-row">
+              <button class="ghost small" onclick="setReviewFilter('pending')">Pending mappings</button>
+              <button class="ghost small" onclick="setReviewFilter('low_confidence')">Low confidence</button>
+              <button class="ghost small" onclick="setReviewFilter('review_products')">Review products</button>
+              <button class="ghost small" onclick="setReviewFilter('invalid_units')">Invalid units</button>
+              <button class="ghost small" onclick="setReviewFilter('missing_price')">Missing price/kg</button>
+            </div>
+            <div id="reviewIssueTable" class="table-wrap"></div>
           </div>
-          <div id="productReviewTable" class="table-wrap tall"></div>
-        </div>
 
-        <div class="panel">
-          <div class="panel-head">
-            <div>
-              <h3>Company Mapping Review</h3>
-              <p>Importer and exporter names are normalized, compared for similarity, and suggested for clubbing under one master company.</p>
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Product Mapping Review</h3>
+                <p>Raw product descriptions and subcategory variants.</p>
+              </div>
+              <span class="pill" id="productReviewCount">0 rows</span>
             </div>
-            <span class="pill" id="companyReviewCount">0 rows</span>
+            <div id="productReviewTable" class="table-wrap tall"></div>
           </div>
-          <div id="companyReviewTable" class="table-wrap tall"></div>
-        </div>
 
-        <div class="panel">
-          <div class="panel-head">
-            <div>
-              <h3>Country Mapping Review</h3>
-              <p>Importer and exporter countries are standardized so country demand is not split by aliases or casing.</p>
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Company Mapping Review</h3>
+                <p>Importer/exporter aliases and master company names.</p>
+              </div>
+              <span class="pill" id="companyReviewCount">0 rows</span>
             </div>
-            <span class="pill" id="countryReviewCount">0 rows</span>
+            <div id="companyReviewTable" class="table-wrap tall"></div>
           </div>
-          <div id="countryReviewTable" class="table-wrap tall"></div>
-        </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Country Mapping Review</h3>
+                <p>Country aliases and approved country names.</p>
+              </div>
+              <span class="pill" id="countryReviewCount">0 rows</span>
+            </div>
+            <div id="countryReviewTable" class="table-wrap tall"></div>
+          </div>
+        </details>
       </section>
 
       <section class="page" id="page-cleaning">
