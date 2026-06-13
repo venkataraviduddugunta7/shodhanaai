@@ -1027,7 +1027,11 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
 
     result = []
     for group in groups.values():
-        if kind == "company" and not group["master_count"]:
+        if (
+            kind == "company"
+            and not group["master_count"]
+            and simple_key(group["standard_value"]) != simple_key(REMAINING_MAPPING_VALUE)
+        ):
             group["standard_value"] = _best_text_canonical(group["suggested_values"] or group["samples"])
         group["needs_review_count"] = _mapping_group_needs_review_count(group)
         group["source_roles"] = ", ".join(sorted(group["source_roles"]))
