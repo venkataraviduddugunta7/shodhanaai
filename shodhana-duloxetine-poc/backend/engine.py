@@ -99,6 +99,166 @@ def seed_files():
         )
 
 
+def seed_database_mappings():
+    seed_files()
+    result = {}
+    with connect() as conn:
+        for config in _mapping_seed_configs():
+            result[config["kind"]] = _seed_mapping_table(conn, config)
+    return result
+
+
+def sync_master_mappings_to_seed():
+    seed_files()
+    result = {}
+    with connect() as conn:
+        for config in _mapping_seed_configs():
+            result[config["kind"]] = _write_master_mappings_to_seed(conn, config)
+    return result
+
+
+def _mapping_seed_configs():
+    return [
+        {
+            "kind": "products",
+            "path": SEED_DIR / "product_mappings.csv",
+            "table": "product_mappings",
+            "raw_column": "raw_product_description",
+            "suggested_column": "suggested_standard_product",
+            "approved_column": "approved_standard_product",
+        },
+        {
+            "kind": "companies",
+            "path": SEED_DIR / "company_mappings.csv",
+            "table": "company_mappings",
+            "raw_column": "raw_company_name",
+            "suggested_column": "suggested_standard_company_name",
+            "approved_column": "approved_standard_company_name",
+            "roles_column": "source_roles",
+        },
+        {
+            "kind": "countries",
+            "path": SEED_DIR / "country_mappings.csv",
+            "table": "country_mappings",
+            "raw_column": "raw_country_name",
+            "suggested_column": "suggested_standard_country_name",
+            "approved_column": "approved_standard_country_name",
+            "roles_column": "source_roles",
+        },
+    ]
+
+
+def _read_seed_mapping_rows(path):
+    if not path.exists():
+        return []
+    rows = []
+    with path.open(newline="", encoding="utf-8-sig") as handle:
+        for row in csv.DictReader(handle):
+            raw = (row.get("raw") or row.get("alias") or row.get("Raw") or "").strip()
+            standard = (
+                row.get("standard")
+                or row.get("approved_standard")
+                or row.get("canonical_name")
+                or row.get("canonical")
+                or ""
+            ).strip()
+            notes = (row.get("notes") or row.get("Notes") or "").strip()
+            if raw and standard:
+                rows.append({"raw": raw, "standard": standard, "notes": notes or "Seed master mapping"})
+    return rows
+
+
+def _seed_mapping_table(conn, config):
+    rows = _read_seed_mapping_rows(config["path"])
+    existing_by_key = _mapping_rows_by_key(conn, config["table"], config["raw_column"], simple_key)
+    inserted = 0
+    updated = 0
+    skipped = 0
+    now = int(time.time())
+    for row in rows:
+        key = simple_key(row["raw"])
+        existing = existing_by_key.get(key)
+        reason = "Default master mapping from seed configuration."
+        if existing and int(existing.get("is_master") or 0):
+            skipped += 1
+            continue
+        if existing:
+            conn.execute(
+                f"""
+                update {config["table"]}
+                set {config["suggested_column"]} = ?,
+                    confidence_score = case when confidence_score < 1.0 then 1.0 else confidence_score end,
+                    reason_for_suggestion = ?,
+                    {config["approved_column"]} = ?,
+                    status = 'Approved',
+                    is_master = 1
+                where id = ?
+                """,
+                (row["standard"], reason, row["standard"], existing["id"]),
+            )
+            updated += 1
+            continue
+
+        if config.get("roles_column"):
+            conn.execute(
+                f"""
+                insert into {config["table"]}(
+                    {config["raw_column"]}, {config["suggested_column"]}, confidence_score,
+                    reason_for_suggestion, {config["roles_column"]}, {config["approved_column"]},
+                    status, is_master, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (row["raw"], row["standard"], 1.0, reason, "Default", row["standard"], "Approved", 1, now),
+            )
+        else:
+            conn.execute(
+                f"""
+                insert into {config["table"]}(
+                    {config["raw_column"]}, {config["suggested_column"]}, confidence_score,
+                    reason_for_suggestion, {config["approved_column"]}, status, is_master, created_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (row["raw"], row["standard"], 1.0, reason, row["standard"], "Approved", 1, now),
+            )
+        inserted += 1
+    return {"inserted": inserted, "updated": updated, "skipped": skipped, "seed_rows": len(rows)}
+
+
+def _write_master_mappings_to_seed(conn, config):
+    existing_seed = {simple_key(row["raw"]): row for row in _read_seed_mapping_rows(config["path"])}
+    rows = conn.execute(
+        f"""
+        select {config["raw_column"]} as raw_value,
+               {config["approved_column"]} as approved_value
+        from {config["table"]}
+        where status = 'Approved'
+          and coalesce(is_master, 0) = 1
+          and coalesce({config["approved_column"]}, '') != ''
+        order by {config["approved_column"]}, {config["raw_column"]}
+        """
+    ).fetchall()
+    confirmed = 0
+    for row in rows:
+        raw = (row["raw_value"] or "").strip()
+        approved = (row["approved_value"] or "").strip()
+        key = simple_key(raw)
+        if not key or not approved:
+            continue
+        existing_seed[key] = {
+            "raw": raw,
+            "standard": approved,
+            "notes": "Confirmed master mapping from Cleaning Review",
+        }
+        confirmed += 1
+
+    output_rows = sorted(existing_seed.values(), key=lambda row: (simple_key(row["standard"]), simple_key(row["raw"])))
+    with config["path"].open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["raw", "standard", "notes"])
+        writer.writeheader()
+        writer.writerows(output_rows)
+    return {"rows": len(output_rows), "confirmed_rows": confirmed, "path": str(config["path"])}
+
+
 def detect_columns(headers):
     normalized = {header: _clean_header(header) for header in headers}
     detected = {}
