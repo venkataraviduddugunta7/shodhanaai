@@ -362,6 +362,7 @@ def import_trade_file(path, original_name, replace=True):
                 "reason_for_suggestion": cleaned["product_reason"],
                 "approved_standard_product": cleaned["standard_product"] if cleaned["product_status"] == "Approved" else "",
                 "status": cleaned["product_status"],
+                "is_master": 1 if _is_trusted_product_mapping(cleaned["product_status"], cleaned["product_reason"]) else 0,
             },
         )
         for role, raw_name, standard_name, confidence, status, reason in [
@@ -671,6 +672,41 @@ def opportunities(filters=None, limit=100):
     return items[:limit]
 
 
+def mapping_review_status(groups=None):
+    groups = groups or mapping_groups()
+    result = {
+        "requires_review": False,
+        "total_groups": 0,
+        "total_aliases": 0,
+        "by_kind": {},
+        "samples": [],
+    }
+    for key, rows in groups.items():
+        review_groups = [
+            group for group in rows
+            if int(group.get("needs_review_count") or 0) > 0 and not _is_generic_review_group(group)
+        ]
+        alias_count = sum(int(group.get("needs_review_count") or 0) for group in review_groups)
+        result["by_kind"][key] = {
+            "groups": len(review_groups),
+            "aliases": alias_count,
+        }
+        result["total_groups"] += len(review_groups)
+        result["total_aliases"] += alias_count
+        for group in review_groups[:4]:
+            result["samples"].append(
+                {
+                    "kind": key,
+                    "standard_value": group.get("standard_value", ""),
+                    "aliases": int(group.get("alias_count") or 0),
+                    "needs_review": int(group.get("needs_review_count") or 0),
+                    "examples": group.get("samples", [])[:4],
+                }
+            )
+    result["requires_review"] = result["total_groups"] > 0
+    return result
+
+
 def opportunity_detail(opportunity_id_value):
     all_opps = opportunities(limit=10000)
     selected = next((item for item in all_opps if item["opportunity_id"] == opportunity_id_value), None)
@@ -949,6 +985,8 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
                 "source_roles": set(),
                 "suggested_values": set(),
                 "master_count": 0,
+                "active_alias_count": 0,
+                "needs_review_count": 0,
                 "items": [],
             },
         )
@@ -969,6 +1007,8 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
         if suggested_value:
             group["suggested_values"].add(suggested_value)
         group["alias_count"] += 1
+        if row.get("status") != "Rejected":
+            group["active_alias_count"] += 1
         if int(row.get("is_master") or 0):
             group["master_count"] += 1
         status = row.get("status", "")
@@ -988,6 +1028,7 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
     for group in groups.values():
         if kind == "company" and not group["master_count"]:
             group["standard_value"] = _best_text_canonical(group["suggested_values"] or group["samples"])
+        group["needs_review_count"] = _mapping_group_needs_review_count(group)
         group["source_roles"] = ", ".join(sorted(group["source_roles"]))
         group["suggested_values"] = sorted(group["suggested_values"])
         group["items"].sort(
@@ -1001,11 +1042,27 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
     return sorted(
         result,
         key=lambda group: (
-            0 if group["pending_count"] else 1,
+            0 if group["needs_review_count"] else 1,
             group["min_confidence"],
             group["standard_value"],
         ),
     )
+
+
+def _mapping_group_needs_review_count(group):
+    active_alias_count = int(group.get("active_alias_count") or 0)
+    if active_alias_count < 2:
+        return 0
+    unconfirmed = [
+        item for item in group.get("items", [])
+        if item.get("status") != "Rejected" and not int(item.get("is_master") or 0)
+    ]
+    return len(unconfirmed)
+
+
+def _is_generic_review_group(group):
+    value = simple_key(group.get("standard_value", ""))
+    return value in {"", "N A", "NA", "UNKNOWN", "TO THE ORDER", "TO THE ORDER OF", "OTHER REVIEW REQUIRED"}
 
 
 def _best_text_canonical(values):
@@ -1389,6 +1446,8 @@ def clean_company_name(raw_name, approved_companies):
     direct, match_reason = _approved_company_lookup(raw_name, approved_companies)
     if direct == REJECTED_COMPANY_ALIAS:
         return display_company(raw_name), 0.5, "Pending", match_reason
+    if match_reason.startswith("Pending"):
+        return direct, 0.9, "Pending", match_reason
     if direct:
         return direct, 1.0, "Approved", match_reason
     return normalize_company(raw_name)
@@ -1428,7 +1487,7 @@ def _approved_company_lookup(raw_name, approved_companies):
             best_value = candidate_value
 
     if best_value and best_score >= 0.92:
-        return best_value, "Approved company master reused by strong similarity to prior approval."
+        return best_value, "Pending similar company master match from prior configuration; confirm this new alias before using it in opportunities."
     return "", ""
 
 
@@ -2231,6 +2290,13 @@ def _is_trusted_country_mapping(status, reason):
         return False
     reason = str(reason or "").lower()
     return "exact country alias" in reason or "trusted country master" in reason
+
+
+def _is_trusted_product_mapping(status, reason):
+    if status != "Approved":
+        return False
+    reason = str(reason or "").lower()
+    return "exact rule match" in reason or "exact mapping from product synonym master" in reason
 
 
 def _is_generic_country_value(value):

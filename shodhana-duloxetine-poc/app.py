@@ -23,6 +23,7 @@ from backend.engine import (
     import_trade_file,
     latest_upload,
     mapping_groups,
+    mapping_review_status,
     mappings,
     opportunity_detail,
     opportunities,
@@ -73,7 +74,10 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query)
             filters = {key: values[0] for key, values in query.items() if values and key != "limit"}
             limit = int(query.get("limit", ["100"])[0])
-            self.send_json({"rows": opportunities(filters=filters, limit=limit)})
+            self.send_json({
+                "rows": opportunities(filters=filters, limit=limit),
+                "mapping_readiness": mapping_review_status(),
+            })
             return
         if parsed.path == "/api/opportunity-detail":
             query = parse_qs(parsed.query)

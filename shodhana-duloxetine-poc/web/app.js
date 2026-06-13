@@ -323,7 +323,7 @@ function aliasChecklist(key, group, index) {
     const isMaster = Number(item.is_master || 0) === 1;
     const isRejected = item.status === "Rejected";
     const checked = !isRejected ? "checked" : "";
-    const disabled = !itemId ? "disabled" : "";
+    const disabled = isMaster || !itemId ? "disabled" : "";
     const rowClass = [
       "alias-check-row",
       isMaster ? "alias-master" : "",
@@ -357,6 +357,9 @@ function smartGroupValueControl(key, inputId, value) {
 }
 
 function groupNeedsConfirm(group) {
+  if (group.needs_review_count !== undefined) {
+    return Math.max(0, Number(group.needs_review_count || 0));
+  }
   return Math.max(
     0,
     Number(group.pending_count || 0)
@@ -381,7 +384,7 @@ function selectedGroupIds(key, index, group) {
   const controls = Array.from(document.querySelectorAll(`input[data-group="${groupControlKey(key, index)}"]`));
   if (!controls.length) return confirmableGroupIds(group);
   return controls
-    .filter((control) => control.checked && !control.disabled)
+    .filter((control) => control.checked)
     .map((control) => Number(control.value || 0))
     .filter(Boolean);
 }
@@ -392,7 +395,10 @@ function excludedGroupIds(key, index, group) {
   const selected = new Set(selectedGroupIds(key, index, group));
   return (group.ids || [])
     .map((id) => Number(id || 0))
-    .filter((id) => id && !selected.has(id));
+    .filter((id) => {
+      const control = controls.find((item) => Number(item.value || 0) === id);
+      return id && control && !control.disabled && !selected.has(id);
+    });
 }
 
 function isGenericMappingGroup(group) {
@@ -643,9 +649,45 @@ function renderCustomers(rows) {
 
 async function loadOpportunities() {
   const data = await getJSON(`/api/opportunities?${opportunityQuery()}`);
+  const readiness = data.mapping_readiness || {};
+  if (readiness.requires_review) {
+    opportunityRows = [];
+    document.getElementById("opportunityCount").textContent = "Mapping review required";
+    renderOpportunityReviewGate(readiness);
+    return;
+  }
   opportunityRows = data.rows || [];
   document.getElementById("opportunityCount").textContent = `${opportunityRows.length} rows`;
   renderOpportunities(opportunityRows);
+}
+
+function renderOpportunityReviewGate(readiness) {
+  const container = document.getElementById("opportunityTable");
+  const samples = readiness.samples || [];
+  const counts = readiness.by_kind || {};
+  container.innerHTML = `<div class="review-gate">
+    <div>
+      <span class="eyebrow">Mapping Review Required</span>
+      <h3>Confirm master mappings before using opportunities</h3>
+      <p>There are ${num(readiness.total_groups || 0)} grouped mapping suggestions with ${num(readiness.total_aliases || 0)} aliases waiting for confirmation. Opportunities are hidden until the mapping layer is clean, so EVA PHARMA-style variants do not appear as separate customers.</p>
+    </div>
+    <div class="smart-metrics">
+      <span>Products ${num(counts.products?.groups || 0)}</span>
+      <span>Companies ${num(counts.companies?.groups || 0)}</span>
+      <span>Countries ${num(counts.countries?.groups || 0)}</span>
+    </div>
+    <div class="review-gate-list">
+      ${samples.slice(0, 6).map((group) => `<div>
+        <strong>${esc(group.standard_value)}</strong>
+        <span>${esc(group.kind)} · ${num(group.needs_review)} aliases need confirmation</span>
+        <em>${esc((group.examples || []).join(" · "))}</em>
+      </div>`).join("")}
+    </div>
+    <div class="button-row">
+      <button onclick="showPage('review'); setTimeout(() => openSmartConfirmModal(), 0)">Open Mapping Review</button>
+      <button class="secondary" onclick="showPage('review')">Go to Cleaning Review</button>
+    </div>
+  </div>`;
 }
 
 function renderOpportunities(rows) {
@@ -680,12 +722,12 @@ function renderOpportunities(rows) {
         <td class="score">#${row.rank}</td>
         <td>
           <strong>${esc(row.importer)}</strong>
-          ${mappingAliasNote(row.importer_aliases, "raw company names")}
+          ${mappingAliasNote(row.importer_aliases, "raw company names clubbed")}
           <br><span class="muted">${esc((row.reasons || []).join(', '))}</span>
         </td>
         <td>${esc(row.country)}<br><span class="muted">${esc(row.market_category)}</span></td>
         <td>${esc(row.product)}</td>
-        <td>${esc(row.current_supplier)}${mappingAliasNote(row.supplier_aliases, "raw supplier names")}</td>
+        <td>${esc(row.current_supplier)}${mappingAliasNote(row.supplier_aliases, "raw supplier names represented")}</td>
         <td>${num(row.total_quantity_kg)}</td>
         <td class="score">${money(row.avg_price_per_kg)}</td>
         <td>${money(row.market_avg_price_per_kg)}</td>
@@ -711,7 +753,7 @@ function renderOpportunities(rows) {
 function mappingAliasNote(aliases, label) {
   const values = Array.isArray(aliases) ? aliases.filter(Boolean) : [];
   if (values.length <= 1) return "";
-  return `<br><span class="mapping-alias-note tip" data-tooltip="${esc(values.join(" · "))}">${num(values.length)} ${esc(label)} clubbed</span>`;
+  return `<br><span class="mapping-alias-note tip" data-tooltip="${esc(values.join(" · "))}">${num(values.length)} ${esc(label)}</span>`;
 }
 
 async function aiAction(action, index) {
@@ -1016,7 +1058,7 @@ function supplierHistoryTable(rows) {
   return rows.length ? `<div class="table-wrap"><table>
     <thead><tr><th>Supplier</th><th>Country</th><th>Qty KG</th><th>Value</th><th>Avg $/KG</th><th>Shipments</th><th>Last Shipment</th><th>Status</th></tr></thead>
     <tbody>${rows.map((row) => `<tr>
-      <td><strong>${esc(row.supplier)}</strong>${mappingAliasNote(row.supplier_aliases, "raw supplier names")}</td><td>${esc(row.exporter_country)}</td><td>${num(row.total_quantity_kg)}</td><td>${money(row.total_value_usd)}</td><td class="score">${money(row.avg_price_per_kg)}</td><td>${num(row.shipment_count)}</td><td>${esc(row.last_shipment_date)}</td><td>${esc(row.shodhana_status)}</td>
+      <td><strong>${esc(row.supplier)}</strong>${mappingAliasNote(row.supplier_aliases, "raw supplier names clubbed")}</td><td>${esc(row.exporter_country)}</td><td>${num(row.total_quantity_kg)}</td><td>${money(row.total_value_usd)}</td><td class="score">${money(row.avg_price_per_kg)}</td><td>${num(row.shipment_count)}</td><td>${esc(row.last_shipment_date)}</td><td>${esc(row.shodhana_status)}</td>
     </tr>`).join("")}</tbody>
   </table></div>` : `<div class="empty">No supplier history.</div>`;
 }

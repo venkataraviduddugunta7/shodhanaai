@@ -92,7 +92,7 @@ The system groups aliases by the suggested master value:
 - Company groups: importer/exporter spelling variants under one standard company name.
 - Country groups: country aliases under one standard country.
 
-The reviewer can confirm the whole group, edit the master value, or reject the group. `Approve Confident` approves high-confidence pending groups and immediately re-runs cleaning so the dashboard reflects the approved master mappings.
+The reviewer can confirm the whole group, edit the master value, or reject the group. Every alias has a checkbox: uncheck a wrong alias before `Confirm Group` or `Save Edited` to remove it from that master group. A removed company alias is blocked from being immediately added back by fuzzy matching. `Approve Confident` approves high-confidence pending groups and immediately re-runs cleaning.
 
 Approved mappings stay in the SQLite database. On the next upload, the same raw name or a very strong normalized company match is applied automatically, so the team does not approve the same company/product/country again.
 
@@ -124,7 +124,7 @@ For country rows, edit the suggested standard country name directly in the text 
 
 ### How To Re-run Cleaning
 
-After approving or editing mappings, click `Re-run Cleaning`.
+Approving, editing, rejecting, or removing aliases now re-runs cleaning automatically. The separate `Re-run Cleaning` button remains available for a manual refresh.
 
 The system will:
 
@@ -158,7 +158,13 @@ Examples:
 - `Republic of Korea` and `South Korea` can be approved under one standard country.
 - `Duloxetine EC Pellets 17%` and other pellet subcategory descriptions can be approved under `Duloxetine Pellets`.
 
-Pending suggestions are not treated as final master data. After the user approves or edits mappings, `Re-run Cleaning` applies the approved standards and clubs the records into one clean view for dashboard, opportunities, and pitch generation.
+Pending suggestions are not treated as final master data. After the user approves or edits mappings, cleaning runs automatically and clubs the approved standards into one clean view for dashboard, opportunities, and pitch generation.
+
+The opportunity engine groups rows by the approved master importer name. It also shows how many raw company names were clubbed and lists those aliases in the opportunity detail view. Supplier history is grouped by the approved master exporter name with its raw aliases visible.
+
+The Opportunities page is gated by mapping readiness. If grouped company/product/country aliases still need confirmation, the page shows a \`Mapping Review Required\` panel instead of raw opportunity rows. This prevents variants such as \`EVA PHARMA\`, \`EVA PHARMA FOR PHARMACEUTICALS\`, and \`EVA PHARMA INDUSTRY\` from appearing as separate targets before the reviewer confirms the master company.
+
+Single trusted values do not create review work. For example, a normal country value like \`Brazil\` is treated as already clean; only new aliases or fuzzy matches such as \`US America\` against an existing \`United States\` master are sent to confirmation.
 
 The approved master data is stored in:
 
