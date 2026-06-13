@@ -10,8 +10,8 @@ The first demo proves:
 4. Normalize importer/exporter company names
 5. Convert quantity into KG where possible
 6. Calculate price per KG
-7. Review and approve/edit/reject product and company mappings
-8. Re-run cleaning from raw records using approved mappings
+7. Review and approve/edit/reject product, company, and country mappings
+8. Re-run cleaning from raw records using approved mappings and club similar names
 9. Show a business dashboard for demand, suppliers, countries, price, and Shodhana/competitor supply
 10. Rank customer opportunities using quantity, recency, supplier, price, country market type, and data quality
 11. Open a customer opportunity detail page with shipment history, supplier history, price analysis, and recommended action
@@ -74,8 +74,9 @@ The Cleaning Review module is the manual-control layer before the final dashboar
 
 It shows:
 
-- Product Mapping Review: raw product description, suggested standard product, confidence, reason, status, and Approve/Edit/Reject actions.
+- Product Mapping Review: raw product description, suggested standard product/category, confidence, reason, status, and Approve/Edit/Reject actions.
 - Company Mapping Review: raw importer/exporter name, suggested standard company name, confidence, role, status, and Approve/Edit/Reject actions.
+- Country Mapping Review: raw importer/exporter country name, suggested standard country name, confidence, role, status, and Approve/Edit/Reject actions.
 - Cleaning Summary: raw records, cleaned records, approved mappings, review-required records, valid KG rows, invalid units, price/kg rows, and missing value/quantity rows.
 - Manual review filters: pending mappings, low-confidence rows, review-required products, invalid units, and missing price/kg rows.
 
@@ -92,6 +93,8 @@ Then click `Approve` or `Edit`. `Reject` marks the suggestion as rejected and ke
 
 For company rows, edit the suggested standard company name directly in the text field, then click `Approve` or `Edit`.
 
+For country rows, edit the suggested standard country name directly in the text field, then click `Approve` or `Edit`.
+
 ### How To Re-run Cleaning
 
 After approving or editing mappings, click `Re-run Cleaning`.
@@ -101,12 +104,34 @@ The system will:
 - Reprocess the raw uploaded records
 - Apply approved product mappings
 - Apply approved importer/exporter company mappings
+- Apply approved importer/exporter country mappings
 - Recalculate KG quantity
 - Recalculate price/kg
+- Rebuild duplicate keys using approved standard product, company, and country values
 - Rebuild dashboard metrics
 - Regenerate opportunity rows
 
 This is the key proof for Shodhana: the sales team can move from messy Excel to controlled, reviewed, sales-ready intelligence without manually rebuilding pivot tables every time.
+
+### Similar Name Clubbing
+
+The cleaning review intentionally separates `suggestion` from `approval`.
+
+When a document is scanned, the system suggests clubbing for:
+
+- Importer names
+- Exporter names
+- Product descriptions and subcategories
+- Importer countries
+- Exporter countries
+
+Examples:
+
+- `Nosch Labs Pvt Ltd` and `Nosch Labs Private Limited` can be approved under one master company.
+- `Republic of Korea` and `South Korea` can be approved under one standard country.
+- `Duloxetine EC Pellets 17%` and other pellet subcategory descriptions can be approved under `Duloxetine Pellets`.
+
+Pending suggestions are not treated as final master data. After the user approves or edits mappings, `Re-run Cleaning` applies the approved standards and clubs the records into one clean view for dashboard, opportunities, and pitch generation.
 
 ## Dashboard And Opportunity Engine
 
