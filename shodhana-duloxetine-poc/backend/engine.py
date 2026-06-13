@@ -15,6 +15,7 @@ from .excel_reader import read_table, write_csv
 from .normalization import (
     classify_product,
     convert_to_kg,
+    display_company,
     matching_company_key,
     market_category,
     normalize_company,
@@ -35,6 +36,8 @@ STANDARD_PRODUCTS = [
     "Duloxetine Reference Standard / Impurity",
     "Other / Review Required",
 ]
+
+REJECTED_COMPANY_ALIAS = "__REJECTED_COMPANY_ALIAS__"
 
 COLUMN_ALIASES = {
     "shipment_date": ["date", "shipment date", "export date", "import date", "invoice date"],
@@ -597,9 +600,9 @@ def opportunities(filters=None, limit=100):
                 importer_country as country,
                 standard_product as product,
                 market_category,
-                group_concat(distinct raw_importer_name) as importer_aliases_text,
-                group_concat(distinct standard_exporter_name) as suppliers,
-                group_concat(distinct raw_exporter_name) as supplier_aliases_text,
+                json_group_array(distinct raw_importer_name) as importer_aliases_text,
+                json_group_array(distinct standard_exporter_name) as suppliers,
+                json_group_array(distinct raw_exporter_name) as supplier_aliases_text,
                 sum(coalesce(quantity_kg, 0)) as total_quantity_kg,
                 sum(coalesce(value_usd, 0)) as total_value_usd,
                 case
@@ -623,7 +626,7 @@ def opportunities(filters=None, limit=100):
     base_items = []
     for row in rows:
         item = dict(row)
-        suppliers = [supplier for supplier in (item.get("suppliers") or "").split(",") if supplier]
+        suppliers = split_distinct_text(item.get("suppliers"))
         item["importer_aliases"] = split_distinct_text(item.pop("importer_aliases_text", ""))
         item["supplier_aliases"] = split_distinct_text(item.pop("supplier_aliases_text", ""))
         item["importer_alias_count"] = len(item["importer_aliases"])
@@ -689,7 +692,7 @@ def opportunity_detail(opportunity_id_value):
             select
                 standard_exporter_name as supplier,
                 exporter_country,
-                group_concat(distinct raw_exporter_name) as supplier_aliases_text,
+                json_group_array(distinct raw_exporter_name) as supplier_aliases_text,
                 count(*) as shipment_count,
                 sum(coalesce(quantity_kg, 0)) as total_quantity_kg,
                 sum(coalesce(value_usd, 0)) as total_value_usd,
@@ -1390,6 +1393,8 @@ def clean_row(row, column_map, approved_products=None, approved_companies=None, 
 
 def clean_company_name(raw_name, approved_companies):
     direct, match_reason = _approved_company_lookup(raw_name, approved_companies)
+    if direct == REJECTED_COMPANY_ALIAS:
+        return display_company(raw_name), 0.5, "Pending", match_reason
     if direct:
         return direct, 1.0, "Approved", match_reason
     return normalize_company(raw_name)
@@ -1398,6 +1403,8 @@ def clean_company_name(raw_name, approved_companies):
 def _approved_company_lookup(raw_name, approved_companies):
     raw_simple = simple_key(raw_name)
     raw_match = matching_company_key(raw_name)
+    if approved_companies.get(raw_simple) == REJECTED_COMPANY_ALIAS:
+        return REJECTED_COMPANY_ALIAS, "Alias was manually removed from a company master group."
     direct = approved_companies.get(raw_simple) or approved_companies.get(raw_match)
     if direct:
         return direct, "Approved company master reused from prior Cleaning Review."
@@ -1408,6 +1415,8 @@ def _approved_company_lookup(raw_name, approved_companies):
     best_value = ""
     best_score = 0.0
     for candidate_key, candidate_value in approved_companies.items():
+        if candidate_value == REJECTED_COMPANY_ALIAS:
+            continue
         candidate = candidate_key.strip()
         if len(candidate) < 5:
             continue
@@ -1465,6 +1474,16 @@ def approved_company_map(conn):
     for row in rows:
         mapping[simple_key(row["raw_company_name"])] = row["approved_standard_company_name"]
         mapping[matching_company_key(row["raw_company_name"])] = row["approved_standard_company_name"]
+    rejected_rows = conn.execute(
+        """
+        select raw_company_name
+        from company_mappings
+        where status = 'Rejected'
+          and reason_for_suggestion like 'Removed from this Smart Confirm group%'
+        """
+    ).fetchall()
+    for row in rejected_rows:
+        mapping[simple_key(row["raw_company_name"])] = REJECTED_COMPANY_ALIAS
     return mapping
 
 
@@ -2328,10 +2347,19 @@ def shodhana_status_for_suppliers(suppliers):
 
 
 def split_distinct_text(value):
+    raw_values = []
+    text_value = str(value or "").strip()
+    if text_value.startswith("["):
+        try:
+            raw_values = json.loads(text_value)
+        except (TypeError, ValueError):
+            raw_values = []
+    if not raw_values:
+        raw_values = text_value.split(",")
     result = []
     seen = set()
-    for part in str(value or "").split(","):
-        text = part.strip()
+    for part in raw_values:
+        text = str(part or "").strip()
         key = simple_key(text)
         if text and key not in seen:
             seen.add(key)
