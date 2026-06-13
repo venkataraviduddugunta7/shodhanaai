@@ -128,6 +128,38 @@ def best_mapping_match(value, mapping, key_func=simple_key):
     return best_value, best_score
 
 
+def pellet_strength_product(simple):
+    matches = re.findall(r"\b(\d+(?:\.\d+)?)\s*(?:%|percent|w\s*w)", simple)
+    for match in matches:
+        strength = safe_float(match)
+        if 16 <= strength <= 18.5:
+            return "Duloxetine Pellets 17%"
+        if 21.5 <= strength <= 23.5:
+            return "Duloxetine Pellets 22.5%"
+        if 24 <= strength <= 26:
+            return "Duloxetine Pellets 25%"
+    return ""
+
+
+def is_reference_or_impurity(simple):
+    return any(
+        term in simple
+        for term in [
+            "reference standard",
+            "ref standard",
+            "working standard",
+            "related compound",
+            "compound h",
+            "compound f",
+            "impurity",
+            "rac duloxetine",
+            "rc h",
+            "rc f",
+            " rs ",
+        ]
+    )
+
+
 def classify_product(description):
     text = str(description or "").lower()
     simple = re.sub(r"[^a-z0-9]+", " ", text)
@@ -145,10 +177,21 @@ def classify_product(description):
         or "e c pellet" in simple
     )
 
+    if "duloxetine" in simple and is_reference_or_impurity(f" {simple} "):
+        return (
+            "Duloxetine Reference Standard / Impurity",
+            0.78,
+            "Pending",
+            "Reference standard, related compound, or impurity material; review before using in sales market analysis.",
+        )
+
     if has_placebo and has_pellet:
         return "Duloxetine Placebo Pellets", 0.99, "Approved", "Exact rule match: contains placebo and pellet."
 
     if has_pellet:
+        strength_product = pellet_strength_product(simple)
+        if strength_product:
+            return strength_product, 0.97, "Approved", "Exact rule match: pellet product with strength detected."
         return "Duloxetine Pellets", 0.95, "Approved", "Exact rule match: product description contains pellet/pallet terms."
 
     if (

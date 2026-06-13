@@ -81,6 +81,7 @@ def init_db():
                 reason_for_suggestion text,
                 approved_standard_product text,
                 status text not null,
+                is_master integer not null default 0,
                 created_at integer not null
             );
 
@@ -93,6 +94,7 @@ def init_db():
                 source_roles text,
                 approved_standard_company_name text,
                 status text not null,
+                is_master integer not null default 0,
                 created_at integer not null
             );
 
@@ -105,6 +107,7 @@ def init_db():
                 source_roles text,
                 approved_standard_country_name text,
                 status text not null,
+                is_master integer not null default 0,
                 created_at integer not null
             );
 
@@ -131,6 +134,9 @@ def init_db():
         ensure_column(conn, "company_mappings", "source_roles", "text")
         ensure_column(conn, "country_mappings", "reason_for_suggestion", "text")
         ensure_column(conn, "country_mappings", "source_roles", "text")
+        ensure_column(conn, "product_mappings", "is_master", "integer not null default 0")
+        ensure_column(conn, "company_mappings", "is_master", "integer not null default 0")
+        ensure_column(conn, "country_mappings", "is_master", "integer not null default 0")
         ensure_column(conn, "generated_pitches", "opportunity_id", "text")
         ensure_column(conn, "generated_pitches", "customer_summary", "text")
         ensure_column(conn, "generated_pitches", "buying_pattern", "text")

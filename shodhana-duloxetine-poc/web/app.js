@@ -8,8 +8,12 @@ let mappingGroupData = {products: [], companies: [], countries: []};
 let reviewFilter = "pending";
 const STANDARD_PRODUCTS = [
   "Duloxetine API",
+  "Duloxetine Pellets 17%",
+  "Duloxetine Pellets 22.5%",
+  "Duloxetine Pellets 25%",
   "Duloxetine Pellets",
   "Duloxetine Placebo Pellets",
+  "Duloxetine Reference Standard / Impurity",
   "Other / Review Required",
 ];
 const GROUP_KINDS = {

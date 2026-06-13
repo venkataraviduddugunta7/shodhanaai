@@ -27,8 +27,12 @@ from .normalization import (
 
 STANDARD_PRODUCTS = [
     "Duloxetine API",
+    "Duloxetine Pellets 17%",
+    "Duloxetine Pellets 22.5%",
+    "Duloxetine Pellets 25%",
     "Duloxetine Pellets",
     "Duloxetine Placebo Pellets",
+    "Duloxetine Reference Standard / Impurity",
     "Other / Review Required",
 ]
 
@@ -61,11 +65,11 @@ def seed_files():
             "Duloxetine Hydrochloride,Duloxetine API,API variant\n"
             "Duloxetine Hydrochloride Ph.Eur,Duloxetine API,API variant\n"
             "Duloxetine Hydrochloride Ph Eur,Duloxetine API,API variant\n"
-            "Duloxetine Hcl Ec Pellets 17% W/W,Duloxetine Pellets,Pellet variant\n"
-            "Duloxetine Ec Pellets 17% W/W,Duloxetine Pellets,Pellet variant\n"
-            "Duloxetine Delayed Release Pellets 17.65% W/W,Duloxetine Pellets,Pellet variant\n"
-            "Duloxetine Hcl 22.4% Dr Pellets,Duloxetine Pellets,DR pellet variant\n"
-            "Duloxetine Hcl 22.4% Dr Pallets,Duloxetine Pellets,DR pellet typo variant\n"
+            "Duloxetine Hcl Ec Pellets 17% W/W,Duloxetine Pellets 17%,17 percent pellet variant\n"
+            "Duloxetine Ec Pellets 17% W/W,Duloxetine Pellets 17%,17 percent pellet variant\n"
+            "Duloxetine Delayed Release Pellets 17.65% W/W,Duloxetine Pellets 17%,17 percent pellet variant\n"
+            "Duloxetine Hcl 22.4% Dr Pellets,Duloxetine Pellets 22.5%,22.5 percent DR pellet variant\n"
+            "Duloxetine Hcl 22.4% Dr Pallets,Duloxetine Pellets 22.5%,22.5 percent DR pellet typo variant\n"
             "Duloxetine Hcl Dr Pallets,Duloxetine Pellets,DR pellet typo variant\n"
             "Duloxetine Hcl Placebo Pellets,Duloxetine Placebo Pellets,Placebo pellet variant\n",
             encoding="utf-8",
@@ -841,7 +845,7 @@ def update_mapping(kind, mapping_id, action, value=""):
         row = dict(row)
         if action == "reject":
             conn.execute(
-                f"update {table} set status = 'Rejected', {approved_column} = '' where id = ?",
+                f"update {table} set status = 'Rejected', {approved_column} = '', is_master = 0 where id = ?",
                 (mapping_id,),
             )
             status = "Rejected"
@@ -858,7 +862,8 @@ def update_mapping(kind, mapping_id, action, value=""):
                 set status = 'Approved',
                     {suggested_column} = ?,
                     {approved_column} = ?,
-                    reason_for_suggestion = ?
+                    reason_for_suggestion = ?,
+                    is_master = 1
                 where id = ?
                 """,
                 (
@@ -893,7 +898,7 @@ def update_mapping_group(kind, ids, action, value=""):
             raise ValueError("No mapping rows found for this group.")
         if action == "reject":
             conn.execute(
-                f"update {table} set status = 'Rejected', {approved_column} = '', reason_for_suggestion = ? where id in ({placeholders})",
+                f"update {table} set status = 'Rejected', {approved_column} = '', reason_for_suggestion = ?, is_master = 0 where id in ({placeholders})",
                 ["Group rejected in Smart Confirm Review.", *ids],
             )
             return {"kind": kind, "status": "Rejected", "updated": len(rows), "approved": ""}
@@ -910,7 +915,8 @@ def update_mapping_group(kind, ids, action, value=""):
                 {suggested_column} = ?,
                 {approved_column} = ?,
                 confidence_score = case when confidence_score < 0.96 then 0.96 else confidence_score end,
-                reason_for_suggestion = ?
+                reason_for_suggestion = ?,
+                is_master = 1
             where id in ({placeholders})
             """,
             [approved, approved, "Group approved in Smart Confirm Review. This master mapping will be reused in future uploads.", *ids],
@@ -1175,7 +1181,13 @@ def approved_product_map(conn):
         """
         select raw_product_description, approved_standard_product
         from product_mappings
-        where status = 'Approved' and coalesce(approved_standard_product, '') != ''
+        where status = 'Approved'
+          and coalesce(approved_standard_product, '') != ''
+          and (
+              coalesce(is_master, 0) = 1
+              or reason_for_suggestion like 'Manually%'
+              or reason_for_suggestion like 'Group approved%'
+          )
         """
     ).fetchall()
     return {simple_key(row["raw_product_description"]): row["approved_standard_product"] for row in rows}
@@ -1688,7 +1700,8 @@ def _replace_product_mappings(conn, rows):
             status = row["status"]
             confidence = row["confidence_score"]
             reason = row.get("reason_for_suggestion", "")
-            if existing.get("status") == "Approved" and existing.get("approved_standard_product"):
+            is_master = int(existing.get("is_master") or 0)
+            if is_master and existing.get("status") == "Approved" and existing.get("approved_standard_product"):
                 suggested = existing["approved_standard_product"]
                 approved = existing["approved_standard_product"]
                 status = "Approved"
@@ -1705,18 +1718,19 @@ def _replace_product_mappings(conn, rows):
                     confidence_score = ?,
                     reason_for_suggestion = ?,
                     approved_standard_product = ?,
-                    status = ?
+                    status = ?,
+                    is_master = ?
                 where id = ?
                 """,
-                (suggested, confidence, reason, approved, status, existing["id"]),
+                (suggested, confidence, reason, approved, status, is_master, existing["id"]),
             )
             continue
         conn.execute(
             """
             insert into product_mappings(
                 raw_product_description, suggested_standard_product, confidence_score,
-                reason_for_suggestion, approved_standard_product, status, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?)
+                reason_for_suggestion, approved_standard_product, status, is_master, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["raw_product_description"],
@@ -1725,6 +1739,7 @@ def _replace_product_mappings(conn, rows):
                 row.get("reason_for_suggestion", ""),
                 row["approved_standard_product"],
                 row["status"],
+                int(row.get("is_master") or 0),
                 int(time.time()),
             ),
         )
@@ -1741,10 +1756,12 @@ def _replace_company_mappings(conn, rows):
             confidence = row["confidence_score"]
             reason = row.get("reason_for_suggestion", "")
             source_roles = _merge_roles(existing.get("source_roles", ""), row.get("source_roles", ""))
+            is_master = int(existing.get("is_master") or 0)
             if existing.get("status") == "Approved" and existing.get("approved_standard_company_name"):
                 suggested = existing["approved_standard_company_name"]
                 approved = existing["approved_standard_company_name"]
                 status = "Approved"
+                is_master = max(is_master, int(row.get("is_master") or 0))
                 confidence = max(float(existing.get("confidence_score") or 0), float(confidence or 0), 0.96)
                 reason = "Approved company master retained and reused for this upload."
             elif existing.get("status") == "Rejected":
@@ -1759,18 +1776,19 @@ def _replace_company_mappings(conn, rows):
                     reason_for_suggestion = ?,
                     source_roles = ?,
                     approved_standard_company_name = ?,
-                    status = ?
+                    status = ?,
+                    is_master = ?
                 where id = ?
                 """,
-                (suggested, confidence, reason, source_roles, approved, status, existing["id"]),
+                (suggested, confidence, reason, source_roles, approved, status, is_master, existing["id"]),
             )
             continue
         conn.execute(
             """
             insert into company_mappings(
                 raw_company_name, suggested_standard_company_name, confidence_score,
-                reason_for_suggestion, source_roles, approved_standard_company_name, status, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                reason_for_suggestion, source_roles, approved_standard_company_name, status, is_master, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["raw_company_name"],
@@ -1780,6 +1798,7 @@ def _replace_company_mappings(conn, rows):
                 row.get("source_roles", ""),
                 row["approved_standard_company_name"],
                 row["status"],
+                int(row.get("is_master") or 0),
                 int(time.time()),
             ),
         )
@@ -1796,10 +1815,12 @@ def _replace_country_mappings(conn, rows):
             confidence = row["confidence_score"]
             reason = row.get("reason_for_suggestion", "")
             source_roles = _merge_roles(existing.get("source_roles", ""), row.get("source_roles", ""))
+            is_master = int(existing.get("is_master") or 0)
             if existing.get("status") == "Approved" and existing.get("approved_standard_country_name"):
                 suggested = existing["approved_standard_country_name"]
                 approved = existing["approved_standard_country_name"]
                 status = "Approved"
+                is_master = max(is_master, int(row.get("is_master") or 0))
                 confidence = max(float(existing.get("confidence_score") or 0), float(confidence or 0), 0.96)
                 reason = "Approved country master retained and reused for this upload."
             elif existing.get("status") == "Rejected":
@@ -1814,18 +1835,19 @@ def _replace_country_mappings(conn, rows):
                     reason_for_suggestion = ?,
                     source_roles = ?,
                     approved_standard_country_name = ?,
-                    status = ?
+                    status = ?,
+                    is_master = ?
                 where id = ?
                 """,
-                (suggested, confidence, reason, source_roles, approved, status, existing["id"]),
+                (suggested, confidence, reason, source_roles, approved, status, is_master, existing["id"]),
             )
             continue
         conn.execute(
             """
             insert into country_mappings(
                 raw_country_name, suggested_standard_country_name, confidence_score,
-                reason_for_suggestion, source_roles, approved_standard_country_name, status, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+                reason_for_suggestion, source_roles, approved_standard_country_name, status, is_master, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["raw_country_name"],
@@ -1835,6 +1857,7 @@ def _replace_country_mappings(conn, rows):
                 row.get("source_roles", ""),
                 row["approved_standard_country_name"],
                 row["status"],
+                int(row.get("is_master") or 0),
                 int(time.time()),
             ),
         )
@@ -1856,7 +1879,7 @@ def _mapping_rows_by_key(conn, table, raw_column, key_func):
 
 def _mapping_row_priority(row):
     status_score = {"Approved": 3, "Pending": 2, "Rejected": 1}.get(row.get("status"), 0)
-    return (status_score, int(row.get("id") or 0))
+    return (int(row.get("is_master") or 0), status_score, int(row.get("id") or 0))
 
 
 def _merge_roles(left, right):
