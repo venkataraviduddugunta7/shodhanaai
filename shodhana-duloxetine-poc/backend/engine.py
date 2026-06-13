@@ -731,10 +731,18 @@ def mapping_groups():
 def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_column, roles_column=""):
     groups = {}
     for row in rows:
-        standard = (row.get(approved_column) or row.get(suggested_column) or "").strip()
+        raw_value = row.get(raw_column, "")
+        approved_value = (row.get(approved_column) or "").strip()
+        suggested_value = (row.get(suggested_column) or "").strip()
+        standard = (approved_value or suggested_value).strip()
         if not standard:
             standard = "Review Required"
-        group_key = simple_key(standard)
+        if kind == "company" and simple_key(standard) in {"TO THE ORDER OF", "UNKNOWN"}:
+            group_key = simple_key(standard)
+        elif kind == "company" and not approved_value:
+            group_key = matching_company_key(raw_value) or simple_key(suggested_value) or simple_key(standard)
+        else:
+            group_key = simple_key(standard)
         group = groups.setdefault(
             group_key,
             {
@@ -749,13 +757,18 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
                 "min_confidence": 1.0,
                 "max_confidence": 0.0,
                 "source_roles": set(),
+                "suggested_values": set(),
+                "master_count": 0,
             },
         )
         group["ids"].append(row["id"])
-        raw_value = row.get(raw_column, "")
-        if raw_value and len(group["samples"]) < 6:
+        if raw_value and raw_value not in group["samples"] and len(group["samples"]) < 6:
             group["samples"].append(raw_value)
+        if suggested_value:
+            group["suggested_values"].add(suggested_value)
         group["alias_count"] += 1
+        if int(row.get("is_master") or 0):
+            group["master_count"] += 1
         status = row.get("status", "")
         if status == "Approved":
             group["approved_count"] += 1
@@ -771,7 +784,10 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
 
     result = []
     for group in groups.values():
+        if kind == "company" and not group["master_count"]:
+            group["standard_value"] = _best_text_canonical(group["suggested_values"] or group["samples"])
         group["source_roles"] = ", ".join(sorted(group["source_roles"]))
+        group["suggested_values"] = sorted(group["suggested_values"])
         result.append(group)
     return sorted(
         result,
@@ -781,6 +797,19 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
             group["standard_value"],
         ),
     )
+
+
+def _best_text_canonical(values):
+    values = [simple_key(value) for value in values if simple_key(value)]
+    if not values:
+        return "UNKNOWN"
+
+    def score(name):
+        has_private = 1 if "PRIVATE LIMITED" in name else 0
+        has_limited = 1 if "LIMITED" in name else 0
+        return (has_private, has_limited, len(name))
+
+    return max(values, key=score)
 
 
 def cleaning_review():

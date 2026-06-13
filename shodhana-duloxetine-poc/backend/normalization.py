@@ -12,7 +12,9 @@ COUNTRY_MAP = SEED_DIR / "country_mappings.csv"
 LEGAL_WORDS = {
     "PVT", "PRIVATE", "LTD", "LIMITED", "LLP", "INC", "CORP", "CORPORATION",
     "COMPANY", "CO", "GMBH", "SA", "S A", "BV", "PLC", "PHARMA",
-    "PHARMACEUTICALS", "LABS", "LABORATORIES",
+    "PHARMACEUTICAL", "PHARMACEUTICALS", "LAB", "LABS", "LABORATORY", "LABORATORIES",
+    "INDUSTRY", "INDUSTRIES", "MEDICAL", "APPLIANCE", "APPLIANCES",
+    "FOR", "THE", "AND", "DRUG", "DRUGS",
 }
 
 INVALID_KG_UNITS = {"NOS", "NO", "PCS", "PC", "UNT", "UNITS", "VLS", "LOT", "CTN", "DRM"}
@@ -72,7 +74,9 @@ def simple_key(value):
 
 
 def matching_company_key(value):
-    words = [word for word in simple_key(value).split() if word not in LEGAL_WORDS]
+    cleaned = simple_key(value)
+    cleaned = cleaned.replace("PHARMACEUTICALSAND", "PHARMACEUTICALS AND")
+    words = [word for word in cleaned.split() if word not in LEGAL_WORDS]
     return " ".join(words)
 
 
@@ -128,8 +132,8 @@ def best_mapping_match(value, mapping, key_func=simple_key):
     return best_value, best_score
 
 
-def pellet_strength_product(simple):
-    matches = re.findall(r"\b(\d+(?:\.\d+)?)\s*(?:%|percent|w\s*w)", simple)
+def pellet_strength_product(text):
+    matches = re.findall(r"\b(\d+(?:\.\d+)?)\s*(?:%|percent)", str(text or "").lower())
     for match in matches:
         strength = safe_float(match)
         if 16 <= strength <= 18.5:
@@ -172,6 +176,7 @@ def classify_product(description):
     has_pellet = (
         re.search(r"\bpellets?\b", simple)
         or re.search(r"\bpallets?\b", simple)
+        or re.search(r"\bpel\b", simple)
         or "delayed release" in simple
         or "ec pellet" in simple
         or "e c pellet" in simple
@@ -189,7 +194,7 @@ def classify_product(description):
         return "Duloxetine Placebo Pellets", 0.99, "Approved", "Exact rule match: contains placebo and pellet."
 
     if has_pellet:
-        strength_product = pellet_strength_product(simple)
+        strength_product = pellet_strength_product(text)
         if strength_product:
             return strength_product, 0.97, "Approved", "Exact rule match: pellet product with strength detected."
         return "Duloxetine Pellets", 0.95, "Approved", "Exact rule match: product description contains pellet/pallet terms."
