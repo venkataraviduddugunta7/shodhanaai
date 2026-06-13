@@ -94,7 +94,7 @@ The system groups aliases by the suggested master value:
 
 The reviewer can confirm the whole group, edit the master value, or reject the group. Every alias has a checkbox, including high-confidence aliases. If an alias does not belong in that group, uncheck it before `Confirm Group` or `Save Edited`. The unchecked alias moves into `Remaining / Create New Mapping`, where the reviewer can select one or more aliases, type a new master product/company/country name, and click `Save New Mapping`.
 
-Confirmed groups disappear from the Smart Confirm modal. Only groups that still need a decision remain visible, which keeps the review focused during a client demo. `Approve Confident` approves high-confidence pending groups and immediately re-runs cleaning.
+Confirmed groups disappear from the Smart Confirm modal. Only groups that still need a decision remain visible, which keeps the review focused during a client demo. Mapping saves are intentionally fast: `Confirm Group`, `Save Edited`, `Save New Mapping`, and `Approve Confident` update the mapping configuration only. After review is complete, click `Re-run Cleaning` once to apply all approved mappings to the full Excel dataset and rebuild dashboard/opportunity results.
 
 Approved mappings stay in the SQLite database. On the next upload, the same raw name or a very strong normalized company match is applied automatically, so the team does not approve the same company/product/country again.
 
@@ -126,7 +126,7 @@ For country rows, edit the suggested standard country name directly in the text 
 
 ### How To Re-run Cleaning
 
-Approving, editing, rejecting, or removing aliases now re-runs cleaning automatically. The separate `Re-run Cleaning` button remains available for a manual refresh.
+Approving, editing, rejecting, or removing aliases does not reprocess the full Excel immediately. This keeps group confirmation fast. After the reviewer finishes mapping decisions, click `Re-run Cleaning` once.
 
 The system will:
 

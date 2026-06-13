@@ -6,6 +6,7 @@ let activeEmailTone = "formal";
 let reviewData = {summary: {}, products: [], companies: [], issue_rows: []};
 let mappingGroupData = {products: [], companies: [], countries: []};
 let reviewFilter = "pending";
+let mappingsNeedRerun = localStorage.getItem("shodhanaMappingsNeedRerun") === "1";
 const STANDARD_PRODUCTS = [
   "Duloxetine API",
   "Duloxetine Pellets 17%",
@@ -56,6 +57,7 @@ async function importSample(button) {
   await withBusy(button, "Importing", async () => {
     setStatus("Importing sample Excel...");
     const result = await postJSON("/api/import-sample", {});
+    markMappingsClean();
     renderImportResult(result);
     await refreshAll();
     setStatus(`Initial cleaning complete: ${result.clean_rows} clean rows, ${result.duplicates_removed} duplicates removed. Review mappings next.`);
@@ -77,6 +79,7 @@ async function uploadFile(button) {
     const response = await fetch("/api/upload", {method: "POST", body: form});
     const result = await response.json();
     if (!response.ok || result.error) throw new Error(result.error || "Upload failed.");
+    markMappingsClean();
     renderImportResult(result);
     await refreshAll();
     const count = result.clean_rows || result.rows || 0;
@@ -437,12 +440,12 @@ async function mappingGroupAction(key, index, action, silent = false) {
       action,
       value,
     });
-    const rerun = await postJSON("/api/rerun-cleaning", {});
-    await refreshAll();
+    markMappingsDirty();
+    await Promise.all([loadReview(), loadMappings(), loadOpportunities()]);
     if (wasOpen) openSmartConfirmModal(key);
     if (!silent) {
-      const removed = result.excluded ? `, ${result.excluded} removed from the group` : "";
-      setStatus(`${result.updated} ${GROUP_KINDS[key].kind} mappings ${result.status.toLowerCase()} as ${result.approved || "rejected"}${removed}. Opportunities regenerated from ${rerun.clean_rows} cleaned rows.`);
+      const removed = result.excluded ? `, ${result.excluded} moved to Remaining / Create New Mapping` : "";
+      setStatus(`${result.updated} ${GROUP_KINDS[key].kind} mappings saved as ${result.approved || "rejected"}${removed}. Keep reviewing, then click Re-run Cleaning once when mappings are ready.`);
     }
   } catch (error) {
     setStatus(error.message || String(error), true);
@@ -472,9 +475,9 @@ async function approveConfidentGroups(button) {
       }
     }
     if (updated) {
-      const rerun = await postJSON("/api/rerun-cleaning", {});
-      await refreshAll();
-      setStatus(`Approved ${updated} confident aliases and regenerated ${rerun.clean_rows} clean rows.`);
+      markMappingsDirty();
+      await Promise.all([loadReview(), loadMappings(), loadOpportunities()]);
+      setStatus(`Approved ${updated} confident aliases. Click Re-run Cleaning once when mapping review is finished.`);
     } else {
       await loadReview();
       await loadMappings();
@@ -668,9 +671,40 @@ async function loadOpportunities() {
     renderOpportunityReviewGate(readiness);
     return;
   }
+  if (mappingsNeedRerun) {
+    opportunityRows = [];
+    document.getElementById("opportunityCount").textContent = "Re-run cleaning required";
+    renderOpportunityRerunGate();
+    return;
+  }
   opportunityRows = data.rows || [];
   document.getElementById("opportunityCount").textContent = `${opportunityRows.length} rows`;
   renderOpportunities(opportunityRows);
+}
+
+function markMappingsDirty() {
+  mappingsNeedRerun = true;
+  localStorage.setItem("shodhanaMappingsNeedRerun", "1");
+}
+
+function markMappingsClean() {
+  mappingsNeedRerun = false;
+  localStorage.removeItem("shodhanaMappingsNeedRerun");
+}
+
+function renderOpportunityRerunGate() {
+  const container = document.getElementById("opportunityTable");
+  container.innerHTML = `<div class="review-gate">
+    <div>
+      <span class="eyebrow">Cleaning Re-run Required</span>
+      <h3>Apply saved mappings before viewing opportunities</h3>
+      <p>Your product, company, or country mappings were saved quickly. Run cleaning once after review to apply those mappings to all raw trade rows and rebuild dashboard/opportunity results.</p>
+    </div>
+    <div class="button-row">
+      <button onclick="showPage('review')">Go to Cleaning Review</button>
+      <button class="secondary" onclick="rerunCleaning(this)">Re-run Cleaning</button>
+    </div>
+  </div>`;
 }
 
 function renderOpportunityReviewGate(readiness) {
@@ -1267,9 +1301,9 @@ async function mappingAction(kind, id, action) {
   const value = valueEl ? valueEl.value.trim() : "";
   try {
     const result = await postJSON("/api/mapping-action", {kind, id, action, value});
-    const rerun = await postJSON("/api/rerun-cleaning", {});
-    setStatus(`${result.kind} mapping ${result.status.toLowerCase()} and opportunities regenerated from ${rerun.clean_rows} cleaned rows.`);
-    await refreshAll();
+    markMappingsDirty();
+    setStatus(`${result.kind} mapping ${result.status.toLowerCase()}. Click Re-run Cleaning once when mapping review is finished.`);
+    await Promise.all([loadReview(), loadMappings(), loadOpportunities()]);
   } catch (error) {
     setStatus(error.message || String(error), true);
   }
@@ -1278,6 +1312,7 @@ async function mappingAction(kind, id, action) {
 async function rerunCleaning(button) {
   await withBusy(button, "Re-running", async () => {
     const result = await postJSON("/api/rerun-cleaning", {});
+    markMappingsClean();
     setStatus(`Cleaning re-run complete: ${result.clean_rows} rows regenerated, ${result.duplicates_removed} duplicates removed.`);
     await refreshAll();
     showPage("dashboard");
