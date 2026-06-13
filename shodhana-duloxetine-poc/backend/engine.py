@@ -597,7 +597,9 @@ def opportunities(filters=None, limit=100):
                 importer_country as country,
                 standard_product as product,
                 market_category,
+                group_concat(distinct raw_importer_name) as importer_aliases_text,
                 group_concat(distinct standard_exporter_name) as suppliers,
+                group_concat(distinct raw_exporter_name) as supplier_aliases_text,
                 sum(coalesce(quantity_kg, 0)) as total_quantity_kg,
                 sum(coalesce(value_usd, 0)) as total_value_usd,
                 case
@@ -622,6 +624,10 @@ def opportunities(filters=None, limit=100):
     for row in rows:
         item = dict(row)
         suppliers = [supplier for supplier in (item.get("suppliers") or "").split(",") if supplier]
+        item["importer_aliases"] = split_distinct_text(item.pop("importer_aliases_text", ""))
+        item["supplier_aliases"] = split_distinct_text(item.pop("supplier_aliases_text", ""))
+        item["importer_alias_count"] = len(item["importer_aliases"])
+        item["supplier_alias_count"] = len(item["supplier_aliases"])
         dates = [date for date in (item.pop("shipment_dates") or "").split(",") if date]
         dates.sort(key=_date_sort_key)
         item["first_shipment_date"] = dates[0] if dates else ""
@@ -683,6 +689,7 @@ def opportunity_detail(opportunity_id_value):
             select
                 standard_exporter_name as supplier,
                 exporter_country,
+                group_concat(distinct raw_exporter_name) as supplier_aliases_text,
                 count(*) as shipment_count,
                 sum(coalesce(quantity_kg, 0)) as total_quantity_kg,
                 sum(coalesce(value_usd, 0)) as total_value_usd,
@@ -718,6 +725,8 @@ def opportunity_detail(opportunity_id_value):
         item = dict(row)
         dates = [date for date in (item.pop("shipment_dates") or "").split(",") if date]
         dates.sort(key=_date_sort_key)
+        item["supplier_aliases"] = split_distinct_text(item.pop("supplier_aliases_text", ""))
+        item["supplier_alias_count"] = len(item["supplier_aliases"])
         item["last_shipment_date"] = dates[-1] if dates else ""
         item["avg_price_per_kg"] = round(item.get("avg_price_per_kg") or 0, 2)
         item["total_quantity_kg"] = round(item.get("total_quantity_kg") or 0, 4)
@@ -749,6 +758,8 @@ def opportunity_detail(opportunity_id_value):
             "total_quantity_kg": selected["total_quantity_kg"],
             "total_value_usd": selected["total_value_usd"],
             "last_shipment_date": selected["last_shipment_date"],
+            "importer_aliases": selected.get("importer_aliases", []),
+            "supplier_aliases": selected.get("supplier_aliases", []),
         },
         "product_summary": {
             "product": selected["product"],
@@ -1101,12 +1112,13 @@ def update_mapping(kind, mapping_id, action, value=""):
         return {"id": mapping_id, "kind": kind, "status": status, "approved": approved, "defaults": defaults}
 
 
-def update_mapping_group(kind, ids, action, value=""):
+def update_mapping_group(kind, ids, action, value="", excluded_ids=None):
     if action not in {"approve", "edit", "reject"}:
         raise ValueError("Group action must be approve, edit, or reject.")
     if not ids:
         raise ValueError("Choose at least one mapping row.")
-    ids = [int(mapping_id) for mapping_id in ids]
+    ids = sorted({int(mapping_id) for mapping_id in ids if int(mapping_id)})
+    excluded_ids = sorted({int(mapping_id) for mapping_id in (excluded_ids or []) if int(mapping_id)} - set(ids))
     config = {
         "product": ("product_mappings", "suggested_standard_product", "approved_standard_product"),
         "company": ("company_mappings", "suggested_standard_company_name", "approved_standard_company_name"),
@@ -1144,8 +1156,32 @@ def update_mapping_group(kind, ids, action, value=""):
             """,
             [approved, approved, "Group approved in Smart Confirm Review. This master mapping will be reused in future uploads.", *ids],
         )
+        excluded_count = 0
+        if excluded_ids:
+            excluded_placeholders = ",".join("?" for _ in excluded_ids)
+            conn.execute(
+                f"""
+                update {table}
+                set status = 'Rejected',
+                    {approved_column} = '',
+                    reason_for_suggestion = ?,
+                    is_master = 0
+                where id in ({excluded_placeholders})
+                """,
+                ["Removed from this Smart Confirm group. Review or edit separately if it belongs to another master value.", *excluded_ids],
+            )
+            excluded_count = conn.execute(
+                f"select changes() as changed"
+            ).fetchone()["changed"]
         defaults = _sync_master_mappings_to_seed_for_conn(conn)
-    return {"kind": kind, "status": "Approved", "updated": len(rows), "approved": approved, "defaults": defaults}
+    return {
+        "kind": kind,
+        "status": "Approved",
+        "updated": len(rows),
+        "excluded": excluded_count,
+        "approved": approved,
+        "defaults": defaults,
+    }
 
 
 def rerun_cleaning():

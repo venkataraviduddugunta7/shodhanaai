@@ -151,6 +151,7 @@ class Handler(BaseHTTPRequestHandler):
                         body.get("ids", []),
                         body.get("action", ""),
                         body.get("value", ""),
+                        body.get("excluded_ids", []),
                     )
                 )
                 return

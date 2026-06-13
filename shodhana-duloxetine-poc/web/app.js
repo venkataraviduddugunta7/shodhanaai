@@ -322,8 +322,8 @@ function aliasChecklist(key, group, index) {
     const itemId = Number(item.id || 0);
     const isMaster = Number(item.is_master || 0) === 1;
     const isRejected = item.status === "Rejected";
-    const checked = !isMaster && !isRejected ? "checked" : "";
-    const disabled = isMaster || !itemId ? "disabled" : "";
+    const checked = !isRejected ? "checked" : "";
+    const disabled = !itemId ? "disabled" : "";
     const rowClass = [
       "alias-check-row",
       isMaster ? "alias-master" : "",
@@ -343,7 +343,7 @@ function aliasChecklist(key, group, index) {
   return `<div class="alias-review">
     <div class="alias-review-head">
       <span>${num(checkedCount)} selected for confirmation</span>
-      <span>Uncheck aliases that do not belong in this master group.</span>
+      <span>Uncheck aliases to remove them from this master group.</span>
     </div>
     <div class="alias-check-list">${rows}</div>
   </div>`;
@@ -371,7 +371,7 @@ function groupControlKey(key, index) {
 
 function confirmableGroupIds(group) {
   const ids = (group.items || [])
-    .filter((item) => Number(item.is_master || 0) !== 1 && item.status !== "Rejected")
+    .filter((item) => item.status !== "Rejected")
     .map((item) => Number(item.id || 0))
     .filter(Boolean);
   return ids.length ? ids : (group.ids || []);
@@ -384,6 +384,15 @@ function selectedGroupIds(key, index, group) {
     .filter((control) => control.checked && !control.disabled)
     .map((control) => Number(control.value || 0))
     .filter(Boolean);
+}
+
+function excludedGroupIds(key, index, group) {
+  const controls = Array.from(document.querySelectorAll(`input[data-group="${groupControlKey(key, index)}"]`));
+  if (!controls.length) return [];
+  const selected = new Set(selectedGroupIds(key, index, group));
+  return (group.ids || [])
+    .map((id) => Number(id || 0))
+    .filter((id) => id && !selected.has(id));
 }
 
 function isGenericMappingGroup(group) {
@@ -402,16 +411,21 @@ async function mappingGroupAction(key, index, action, silent = false) {
     return;
   }
   try {
+    const wasOpen = !document.getElementById("smartConfirmModal").classList.contains("hidden");
     const result = await postJSON("/api/mapping-group-action", {
       kind: GROUP_KINDS[key].kind,
       ids,
+      excluded_ids: action === "reject" ? [] : excludedGroupIds(key, index, group),
       action,
       value,
     });
-    if (!silent) setStatus(`${result.updated} ${GROUP_KINDS[key].kind} mappings ${result.status.toLowerCase()} as ${result.approved || "rejected"}.`);
-    await loadReview();
-    await loadMappings();
-    if (!document.getElementById("smartConfirmModal").classList.contains("hidden")) openSmartConfirmModal(key);
+    const rerun = await postJSON("/api/rerun-cleaning", {});
+    await refreshAll();
+    if (wasOpen) openSmartConfirmModal(key);
+    if (!silent) {
+      const removed = result.excluded ? `, ${result.excluded} removed from the group` : "";
+      setStatus(`${result.updated} ${GROUP_KINDS[key].kind} mappings ${result.status.toLowerCase()} as ${result.approved || "rejected"}${removed}. Opportunities regenerated from ${rerun.clean_rows} cleaned rows.`);
+    }
   } catch (error) {
     setStatus(error.message || String(error), true);
   }
@@ -1180,9 +1194,9 @@ async function mappingAction(kind, id, action) {
   const value = valueEl ? valueEl.value.trim() : "";
   try {
     const result = await postJSON("/api/mapping-action", {kind, id, action, value});
-    setStatus(`${result.kind} mapping ${result.status.toLowerCase()}. Re-run cleaning to apply it.`);
-    await loadReview();
-    await loadMappings();
+    const rerun = await postJSON("/api/rerun-cleaning", {});
+    setStatus(`${result.kind} mapping ${result.status.toLowerCase()} and opportunities regenerated from ${rerun.clean_rows} cleaned rows.`);
+    await refreshAll();
   } catch (error) {
     setStatus(error.message || String(error), true);
   }
