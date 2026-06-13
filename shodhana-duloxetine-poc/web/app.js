@@ -284,7 +284,6 @@ function smartConfirmGroup(key, group, index) {
   const inputId = `smart-${key}-${index}`;
   const needsConfirm = groupNeedsConfirm(group);
   const confidence = `${percent(group.min_confidence)}-${percent(group.max_confidence)}`;
-  const samples = (group.samples || []).map((sample) => `<li>${esc(sample)}</li>`).join("");
   return `<div class="smart-group">
     <div class="smart-group-main">
       <span class="eyebrow">${needsConfirm ? `${num(needsConfirm)} need confirm` : "Confirmed"}</span>
@@ -295,13 +294,58 @@ function smartConfirmGroup(key, group, index) {
         <span>${confidence}</span>
         ${group.source_roles ? `<span>${esc(group.source_roles)}</span>` : ""}
       </div>
-      <ul class="sample-list">${samples}</ul>
+      ${aliasChecklist(key, group, index)}
     </div>
     <div class="smart-group-actions">
       <button class="small" onclick="mappingGroupAction('${key}', ${index}, 'approve')">Confirm Group</button>
       <button class="small secondary" onclick="mappingGroupAction('${key}', ${index}, 'edit')">Save Edited</button>
       <button class="small ghost" onclick="mappingGroupAction('${key}', ${index}, 'reject')">Reject</button>
     </div>
+  </div>`;
+}
+
+function aliasChecklist(key, group, index) {
+  const items = Array.isArray(group.items) && group.items.length
+    ? group.items
+    : (group.samples || []).map((sample, sampleIndex) => ({
+        id: group.ids?.[sampleIndex] || 0,
+        raw: sample,
+        suggested: group.standard_value,
+        status: "Pending",
+        confidence: group.max_confidence || 0,
+        is_master: 0,
+      }));
+  if (!items.length) return "";
+  const controlKey = groupControlKey(key, index);
+  const checkedCount = confirmableGroupIds(group).length;
+  const rows = items.map((item) => {
+    const itemId = Number(item.id || 0);
+    const isMaster = Number(item.is_master || 0) === 1;
+    const isRejected = item.status === "Rejected";
+    const checked = !isMaster && !isRejected ? "checked" : "";
+    const disabled = isMaster || !itemId ? "disabled" : "";
+    const rowClass = [
+      "alias-check-row",
+      isMaster ? "alias-master" : "",
+      isRejected ? "alias-rejected" : "",
+    ].filter(Boolean).join(" ");
+    const statusText = isMaster ? "Master" : isRejected ? "Rejected" : item.status || "Pending";
+    const suggested = item.approved || item.suggested || group.standard_value || "";
+    return `<label class="${rowClass}">
+      <input type="checkbox" data-group="${esc(controlKey)}" value="${itemId}" ${checked} ${disabled}>
+      <span>
+        <strong>${esc(item.raw || "Unknown")}</strong>
+        ${suggested ? `<em>${esc(suggested)}</em>` : ""}
+      </span>
+      <span class="alias-status">${esc(statusText)} · ${percent(item.confidence || 0)}</span>
+    </label>`;
+  }).join("");
+  return `<div class="alias-review">
+    <div class="alias-review-head">
+      <span>${num(checkedCount)} selected for confirmation</span>
+      <span>Uncheck aliases that do not belong in this master group.</span>
+    </div>
+    <div class="alias-check-list">${rows}</div>
   </div>`;
 }
 
@@ -313,7 +357,33 @@ function smartGroupValueControl(key, inputId, value) {
 }
 
 function groupNeedsConfirm(group) {
-  return Math.max(0, Number(group.alias_count || 0) - Number(group.master_count || 0));
+  return Math.max(
+    0,
+    Number(group.pending_count || 0)
+      + Number(group.approved_count || 0)
+      - Number(group.master_count || 0)
+  );
+}
+
+function groupControlKey(key, index) {
+  return `group-${key}-${index}`;
+}
+
+function confirmableGroupIds(group) {
+  const ids = (group.items || [])
+    .filter((item) => Number(item.is_master || 0) !== 1 && item.status !== "Rejected")
+    .map((item) => Number(item.id || 0))
+    .filter(Boolean);
+  return ids.length ? ids : (group.ids || []);
+}
+
+function selectedGroupIds(key, index, group) {
+  const controls = Array.from(document.querySelectorAll(`input[data-group="${groupControlKey(key, index)}"]`));
+  if (!controls.length) return confirmableGroupIds(group);
+  return controls
+    .filter((control) => control.checked && !control.disabled)
+    .map((control) => Number(control.value || 0))
+    .filter(Boolean);
 }
 
 function isGenericMappingGroup(group) {
@@ -326,10 +396,15 @@ async function mappingGroupAction(key, index, action, silent = false) {
   if (!group) return;
   const input = document.getElementById(`smart-${key}-${index}`);
   const value = input ? input.value.trim() : group.standard_value;
+  const ids = selectedGroupIds(key, index, group);
+  if (!ids.length) {
+    setStatus("Select at least one alias before saving this group.", true);
+    return;
+  }
   try {
     const result = await postJSON("/api/mapping-group-action", {
       kind: GROUP_KINDS[key].kind,
-      ids: group.ids,
+      ids,
       action,
       value,
     });
@@ -353,13 +428,14 @@ async function approveConfidentGroups(button) {
         const minConfidence = Number(group.min_confidence || 0);
         const reviewRequired = String(group.standard_value || "").toLowerCase().includes("review required");
         if (needsConfirm && minConfidence >= 0.9 && !reviewRequired && !isGenericMappingGroup(group)) {
+          const ids = confirmableGroupIds(group);
           await postJSON("/api/mapping-group-action", {
             kind: GROUP_KINDS[key].kind,
-            ids: group.ids,
+            ids,
             action: "approve",
             value: group.standard_value,
           });
-          updated += Number(group.alias_count || 0);
+          updated += ids.length;
         }
       }
     }

@@ -416,6 +416,66 @@ td strong { color: #14251f; }
   color: #465952;
   line-height: 1.45;
 }
+.alias-review {
+  display: grid;
+  gap: 8px;
+}
+.alias-review-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 780;
+}
+.alias-check-list {
+  max-height: 230px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.alias-check-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.alias-check-row:last-child { border-bottom: 0; }
+.alias-check-row:hover { background: #f7fbfa; }
+.alias-check-row input { margin-top: 2px; }
+.alias-check-row strong,
+.alias-check-row em {
+  display: block;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+.alias-check-row strong {
+  color: #14251f;
+  font-size: 12px;
+}
+.alias-check-row em {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+.alias-status {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 820;
+  white-space: nowrap;
+}
+.alias-master {
+  background: #f5f8f6;
+  cursor: default;
+}
+.alias-rejected {
+  opacity: .62;
+}
 .smart-group-actions {
   display: grid;
   align-content: start;

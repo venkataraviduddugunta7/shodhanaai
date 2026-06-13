@@ -73,11 +73,14 @@ TRUSTED_COUNTRY_NAMES = [
     "Czech Republic", "Dominican Republic", "Egypt", "France", "Germany",
     "Guatemala", "Hong Kong", "Hungary", "India", "Indonesia", "Iran",
     "Iraq", "Israel", "Italy", "Japan", "Jordan", "Kazakhstan", "Kuwait",
-    "Lebanon", "Malaysia", "Malta", "Mexico", "Nepal", "Netherlands",
-    "Oman", "Pakistan", "Paraguay", "Puerto Rico", "Romania", "Russia",
-    "Saudi Arabia", "Serbia", "Singapore", "South Korea", "Spain",
-    "Sri Lanka", "Switzerland", "Syria", "Taiwan", "Thailand", "Turkey",
+    "Kenya", "Latvia", "Lebanon", "Malaysia", "Malta", "Mexico",
+    "Morocco", "Nepal", "Netherlands", "Oman", "Pakistan", "Paraguay",
+    "Peru", "Philippines", "Poland", "Puerto Rico", "Romania", "Russia",
+    "Saudi Arabia", "Serbia", "Singapore", "Slovakia", "Slovenia",
+    "South Africa", "South Korea", "Spain", "Sri Lanka", "Sudan",
+    "Switzerland", "Syria", "Taiwan", "Thailand", "Turkey", "Ukraine",
     "United Arab Emirates", "United Kingdom", "United States", "Uruguay",
+    "Vietnam", "Yemen",
 ]
 
 

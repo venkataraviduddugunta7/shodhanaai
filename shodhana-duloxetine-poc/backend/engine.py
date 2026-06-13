@@ -1924,7 +1924,7 @@ def _replace_product_mappings(conn, rows):
             status = row["status"]
             confidence = row["confidence_score"]
             reason = row.get("reason_for_suggestion", "")
-            is_master = int(existing.get("is_master") or 0)
+            is_master = max(int(existing.get("is_master") or 0), int(row.get("is_master") or 0))
             if is_master and existing.get("status") == "Approved" and existing.get("approved_standard_product"):
                 suggested = existing["approved_standard_product"]
                 approved = existing["approved_standard_product"]
@@ -1980,7 +1980,7 @@ def _replace_company_mappings(conn, rows):
             confidence = row["confidence_score"]
             reason = row.get("reason_for_suggestion", "")
             source_roles = _merge_roles(existing.get("source_roles", ""), row.get("source_roles", ""))
-            is_master = int(existing.get("is_master") or 0)
+            is_master = max(int(existing.get("is_master") or 0), int(row.get("is_master") or 0))
             if existing.get("status") == "Approved" and existing.get("approved_standard_company_name"):
                 suggested = existing["approved_standard_company_name"]
                 approved = existing["approved_standard_company_name"]
@@ -2039,12 +2039,21 @@ def _replace_country_mappings(conn, rows):
             confidence = row["confidence_score"]
             reason = row.get("reason_for_suggestion", "")
             source_roles = _merge_roles(existing.get("source_roles", ""), row.get("source_roles", ""))
-            is_master = int(existing.get("is_master") or 0)
-            if existing.get("status") == "Approved" and existing.get("approved_standard_country_name"):
+            is_master = max(int(existing.get("is_master") or 0), int(row.get("is_master") or 0))
+            existing_approved = existing.get("approved_standard_country_name") or ""
+            trusted_real_country = (
+                int(row.get("is_master") or 0) == 1
+                and not _is_generic_country_value(row.get("approved_standard_country_name"))
+            )
+            existing_is_generic = _is_generic_country_value(existing_approved)
+            if (
+                existing.get("status") == "Approved"
+                and existing_approved
+                and not (trusted_real_country and existing_is_generic)
+            ):
                 suggested = existing["approved_standard_country_name"]
                 approved = existing["approved_standard_country_name"]
                 status = "Approved"
-                is_master = max(is_master, int(row.get("is_master") or 0))
                 confidence = max(float(existing.get("confidence_score") or 0), float(confidence or 0), 0.96)
                 reason = "Approved country master retained and reused for this upload."
             elif existing.get("status") == "Rejected":
@@ -2159,13 +2168,13 @@ def _merge_country_mapping(mapping_rows, role, raw_name, standard_name, confiden
     roles = set(filter(None, [part.strip() for part in current.get("source_roles", "").split(",")]))
     roles.add(role)
     current["source_roles"] = ", ".join(sorted(roles))
+    current["is_master"] = max(int(current.get("is_master") or 0), is_master)
     if confidence > current.get("confidence_score", 0):
         current["suggested_standard_country_name"] = standard_name
         current["confidence_score"] = confidence
         current["reason_for_suggestion"] = reason
         current["approved_standard_country_name"] = standard_name if status == "Approved" else current.get("approved_standard_country_name", "")
         current["status"] = status if current["status"] != "Approved" else current["status"]
-        current["is_master"] = max(int(current.get("is_master") or 0), is_master)
 
 
 def _is_trusted_country_mapping(status, reason):
@@ -2173,6 +2182,10 @@ def _is_trusted_country_mapping(status, reason):
         return False
     reason = str(reason or "").lower()
     return "exact country alias" in reason or "trusted country master" in reason
+
+
+def _is_generic_country_value(value):
+    return simple_key(value) in {"", "N A", "NA", "NONE", "UNKNOWN", "NOT AVAILABLE"}
 
 
 def _cluster_company_mappings(mapping_rows):
