@@ -242,13 +242,27 @@ function smartConfirmSection(key, groups) {
   if (!groups.length) {
     return `<section class="smart-section"><h3>${esc(meta.label)}</h3><div class="empty">No mapping groups yet.</div></section>`;
   }
+  const ranked = groups
+    .map((group, index) => ({group, index}))
+    .sort((left, right) => {
+      const leftReview = String(left.group.standard_value || "").toLowerCase().includes("review required") ? 1 : 0;
+      const rightReview = String(right.group.standard_value || "").toLowerCase().includes("review required") ? 1 : 0;
+      return (
+        leftReview - rightReview
+        || right.group.pending_count - left.group.pending_count
+        || Number(right.group.max_confidence || 0) - Number(left.group.max_confidence || 0)
+        || Number(right.group.alias_count || 0) - Number(left.group.alias_count || 0)
+      );
+    });
+  const visible = ranked.filter((entry) => Number(entry.group.pending_count || 0) > 0).slice(0, 25);
+  const display = visible.length ? visible : ranked.slice(0, 25);
   return `<section class="smart-section">
     <div class="smart-section-head">
       <h3>${esc(meta.label)}</h3>
-      <span class="pill">${num(groups.length)} groups</span>
+      <span class="pill">Showing ${num(display.length)} of ${num(groups.length)} groups</span>
     </div>
     <div class="smart-group-list">
-      ${groups.map((group, index) => smartConfirmGroup(key, group, index)).join("")}
+      ${display.map((entry) => smartConfirmGroup(key, entry.group, entry.index)).join("")}
     </div>
   </section>`;
 }
