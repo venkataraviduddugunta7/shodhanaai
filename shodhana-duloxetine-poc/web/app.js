@@ -375,6 +375,20 @@ async function approveConfidentGroups(button) {
   });
 }
 
+async function syncMasterMappings(button) {
+  await withBusy(button, "Saving", async () => {
+    const result = await postJSON("/api/sync-master-mappings", {});
+    const parts = [
+      `Products ${num(result.products?.rows || 0)}`,
+      `Companies ${num(result.companies?.rows || 0)}`,
+      `Countries ${num(result.countries?.rows || 0)}`,
+    ];
+    setStatus(`Saved confirmed mappings as defaults: ${parts.join(", ")}.`);
+    await loadMappings();
+    await loadReview();
+  });
+}
+
 function renderDashboardCards(stats) {
   const cards = [
     ["Total Records", stats.total_records],
@@ -1109,13 +1123,14 @@ async function rerunCleaning(button) {
 
 function renderProductMappings(rows) {
   const html = rows.length ? `<table>
-    <thead><tr><th>Raw Product Description</th><th>Suggested Standard Product</th><th>Confidence</th><th>Reason</th><th>Approved</th><th>Status</th></tr></thead>
+    <thead><tr><th>Raw Product Description</th><th>Suggested Standard Product</th><th>Confidence</th><th>Reason</th><th>Approved</th><th>Master</th><th>Status</th></tr></thead>
     <tbody>${rows.map((row) => `<tr>
       <td><strong>${esc(row.raw_product_description)}</strong></td>
       <td>${esc(row.suggested_standard_product)}</td>
       <td class="${confidenceClass(row.confidence_score)}">${percent(row.confidence_score)}</td>
       <td>${esc(row.reason_for_suggestion || "")}</td>
       <td>${esc(row.approved_standard_product)}</td>
+      <td>${masterText(row.is_master)}</td>
       <td>${statusText(row.status)}</td>
     </tr>`).join("")}</tbody>
   </table>` : `<div class="empty">Import data to create product mapping rows.</div>`;
@@ -1125,13 +1140,14 @@ function renderProductMappings(rows) {
 
 function renderCompanyMappings(rows) {
   const html = rows.length ? `<table>
-    <thead><tr><th>Raw Company Name</th><th>Suggested Standard Company</th><th>Confidence</th><th>Role</th><th>Approved</th><th>Status</th></tr></thead>
+    <thead><tr><th>Raw Company Name</th><th>Suggested Standard Company</th><th>Confidence</th><th>Role</th><th>Approved</th><th>Master</th><th>Status</th></tr></thead>
     <tbody>${rows.map((row) => `<tr>
       <td><strong>${esc(row.raw_company_name)}</strong></td>
       <td>${esc(row.suggested_standard_company_name)}</td>
       <td class="${confidenceClass(row.confidence_score)}">${percent(row.confidence_score)}</td>
       <td>${esc(row.source_roles || "")}</td>
       <td>${esc(row.approved_standard_company_name)}</td>
+      <td>${masterText(row.is_master)}</td>
       <td>${statusText(row.status)}</td>
     </tr>`).join("")}</tbody>
   </table>` : `<div class="empty">Import data to create company mapping rows.</div>`;
@@ -1141,13 +1157,14 @@ function renderCompanyMappings(rows) {
 
 function renderCountryMappings(rows) {
   const html = rows.length ? `<table>
-    <thead><tr><th>Raw Country Name</th><th>Suggested Standard Country</th><th>Confidence</th><th>Role</th><th>Approved</th><th>Status</th></tr></thead>
+    <thead><tr><th>Raw Country Name</th><th>Suggested Standard Country</th><th>Confidence</th><th>Role</th><th>Approved</th><th>Master</th><th>Status</th></tr></thead>
     <tbody>${rows.map((row) => `<tr>
       <td><strong>${esc(row.raw_country_name)}</strong></td>
       <td>${esc(row.suggested_standard_country_name)}</td>
       <td class="${confidenceClass(row.confidence_score)}">${percent(row.confidence_score)}</td>
       <td>${esc(row.source_roles || "")}</td>
       <td>${esc(row.approved_standard_country_name)}</td>
+      <td>${masterText(row.is_master)}</td>
       <td>${statusText(row.status)}</td>
     </tr>`).join("")}</tbody>
   </table>` : `<div class="empty">Import data to create country mapping rows.</div>`;
@@ -1203,6 +1220,10 @@ function statusText(value) {
   const text = String(value || "");
   const cls = text === "Pending" || text === "Suggested" ? "warning-text" : text === "Rejected" ? "danger-text" : "approved-text";
   return `<span class="${cls}">${esc(text)}</span>`;
+}
+
+function masterText(value) {
+  return Number(value || 0) ? `<span class="approved-text">Yes</span>` : `<span class="muted">No</span>`;
 }
 
 function confidenceClass(value) {

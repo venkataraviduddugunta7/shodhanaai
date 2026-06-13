@@ -128,6 +128,7 @@
             <div class="button-row">
               <button class="secondary tip" data-tooltip="Open a grouped confirmation view for product, company, and country master mappings." onclick="openSmartConfirmModal()">Open Smart Confirm</button>
               <button class="ghost small tip" data-tooltip="Approve confident pending groups and then re-run cleaning from the approved master mappings." onclick="approveConfidentGroups(this)">Approve Confident</button>
+              <button class="ghost small tip" data-tooltip="Save confirmed master mappings into default seed CSV files so fresh deployments can load the same knowledge." onclick="syncMasterMappings(this)">Save Defaults</button>
             </div>
           </div>
           <div id="smartConfirmCards" class="smart-grid"></div>

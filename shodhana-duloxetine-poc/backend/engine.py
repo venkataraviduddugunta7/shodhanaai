@@ -110,10 +110,14 @@ def seed_database_mappings():
 
 def sync_master_mappings_to_seed():
     seed_files()
-    result = {}
     with connect() as conn:
-        for config in _mapping_seed_configs():
-            result[config["kind"]] = _write_master_mappings_to_seed(conn, config)
+        return _sync_master_mappings_to_seed_for_conn(conn)
+
+
+def _sync_master_mappings_to_seed_for_conn(conn):
+    result = {}
+    for config in _mapping_seed_configs():
+        result[config["kind"]] = _write_master_mappings_to_seed(conn, config)
     return result
 
 
@@ -226,6 +230,16 @@ def _seed_mapping_table(conn, config):
 
 def _write_master_mappings_to_seed(conn, config):
     existing_seed = {simple_key(row["raw"]): row for row in _read_seed_mapping_rows(config["path"])}
+    rejected_rows = conn.execute(
+        f"""
+        select {config["raw_column"]} as raw_value
+        from {config["table"]}
+        where status = 'Rejected'
+        """
+    ).fetchall()
+    for row in rejected_rows:
+        existing_seed.pop(simple_key(row["raw_value"] or ""), None)
+
     rows = conn.execute(
         f"""
         select {config["raw_column"]} as raw_value,
@@ -295,6 +309,7 @@ def import_sample():
 def import_trade_file(path, original_name, replace=True):
     init_db()
     seed_files()
+    seed_database_mappings()
     rows = read_table(path)
     if not rows:
         raise ValueError("No rows found in uploaded file.")
@@ -517,7 +532,8 @@ def import_mapping_file(kind, path):
         writer = csv.DictWriter(handle, fieldnames=["raw", "standard", "notes"])
         writer.writeheader()
         writer.writerows(normalized_rows)
-    return {"rows": len(normalized_rows), "target": str(target)}
+    seeded = seed_database_mappings()
+    return {"rows": len(normalized_rows), "target": str(target), "seeded": seeded}
 
 
 def dashboard(filters=None):
@@ -1039,6 +1055,7 @@ def update_mapping(kind, mapping_id, action, value=""):
             )
             status = "Rejected"
             approved = ""
+            defaults = _sync_master_mappings_to_seed_for_conn(conn)
         else:
             approved = (value or row.get(suggested_column) or "").strip()
             if not approved:
@@ -1061,7 +1078,8 @@ def update_mapping(kind, mapping_id, action, value=""):
                 ),
             )
             status = "Approved"
-        return {"id": mapping_id, "kind": kind, "status": status, "approved": approved}
+            defaults = _sync_master_mappings_to_seed_for_conn(conn)
+        return {"id": mapping_id, "kind": kind, "status": status, "approved": approved, "defaults": defaults}
 
 
 def update_mapping_group(kind, ids, action, value=""):
@@ -1088,7 +1106,8 @@ def update_mapping_group(kind, ids, action, value=""):
                 f"update {table} set status = 'Rejected', {approved_column} = '', reason_for_suggestion = ?, is_master = 0 where id in ({placeholders})",
                 ["Group rejected in Smart Confirm Review.", *ids],
             )
-            return {"kind": kind, "status": "Rejected", "updated": len(rows), "approved": ""}
+            defaults = _sync_master_mappings_to_seed_for_conn(conn)
+            return {"kind": kind, "status": "Rejected", "updated": len(rows), "approved": "", "defaults": defaults}
 
         approved = (value or rows[0].get(approved_column) or rows[0].get(suggested_column) or "").strip()
         if not approved:
@@ -1106,7 +1125,8 @@ def update_mapping_group(kind, ids, action, value=""):
             """,
             [approved, approved, "Group approved in Smart Confirm Review. This master mapping will be reused in future uploads.", *ids],
         )
-    return {"kind": kind, "status": "Approved", "updated": len(rows), "approved": approved}
+        defaults = _sync_master_mappings_to_seed_for_conn(conn)
+    return {"kind": kind, "status": "Approved", "updated": len(rows), "approved": approved, "defaults": defaults}
 
 
 def rerun_cleaning():

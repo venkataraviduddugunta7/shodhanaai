@@ -32,7 +32,9 @@ from backend.engine import (
     rows_to_csv_bytes,
     rows_to_xlsx_bytes,
     save_uploaded_file,
+    seed_database_mappings,
     seed_files,
+    sync_master_mappings_to_seed,
     update_mapping_group,
     update_mapping,
 )
@@ -155,6 +157,9 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/rerun-cleaning":
                 self.send_json(rerun_cleaning())
                 return
+            if parsed.path == "/api/sync-master-mappings":
+                self.send_json(sync_master_mappings_to_seed())
+                return
             if parsed.path == "/api/ai-action":
                 body = self.read_json()
                 self.send_json({"content": generate_ai_action(body.get("action", "pitch"), body.get("opportunity", {}))})
@@ -258,6 +263,7 @@ def main():
     ensure_dirs()
     init_db()
     seed_files()
+    seed_database_mappings()
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8010"))
     server = ThreadingHTTPServer((host, port), Handler)

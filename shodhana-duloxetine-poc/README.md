@@ -100,9 +100,12 @@ The app separates system suggestions from confirmed configuration:
 
 - System suggestions can be recalculated as the cleaning rules improve.
 - User-confirmed mappings are saved as master configuration.
+- Confirmed mappings are also synced into `data/seed/*.csv` as default mappings, so a fresh DB can load the same knowledge.
 - Product masters can be edited into subcategories such as `Duloxetine Pellets 17%`, `Duloxetine Pellets 22.5%`, or `Duloxetine Pellets 25%`.
 - Company masters club variants like `EVA PHARMA`, `EVA PHARMA FOR PHARMACEUTICALS`, and `EVA PHARMA FOR PHARMACEUTICALSAND MEDICAL APPLIANCES SA`.
 - Future AI/LLM support should suggest difficult mappings, but the approved result should still be stored in these mapping tables.
+
+Use `Save Defaults` to manually rewrite the seed CSV files from the current confirmed master mappings. Approve/Edit/Reject actions also sync defaults automatically.
 
 ### How To Approve Mappings
 
@@ -164,6 +167,16 @@ The approved master data is stored in:
 - `country_mappings`
 
 These tables are not cleared when a new trade file is uploaded. New files reuse the approved master mappings and only ask for review when a genuinely new or low-confidence alias appears.
+
+On app startup, the seed CSV files are loaded into the mapping tables as approved master defaults. This gives the POC a simple configuration lifecycle:
+
+```text
+Review alias
+-> confirm/edit master value
+-> save to SQLite mapping table
+-> sync to seed CSV defaults
+-> future uploads reuse automatically
+```
 
 ## Dashboard And Opportunity Engine
 
