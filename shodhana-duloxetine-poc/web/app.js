@@ -322,16 +322,19 @@ function smartConfirmSection(key, groups) {
       );
     });
   const visible = ranked.filter((entry) => groupNeedsConfirm(entry.group) > 0).slice(0, 25);
-  const display = visible;
+  const display = showConfirmedGroups ? ranked.slice(0, 80) : visible;
+  const emptyText = showConfirmedGroups
+    ? "No mapping groups for this section."
+    : "No pending mapping groups for this section. Use Manage Groups to edit confirmed groups.";
   return `<section class="smart-section">
     <div class="smart-section-head">
       <h3>${esc(meta.label)}</h3>
-      <span class="pill">Showing ${num(display.length)} of ${num(groups.length)} groups</span>
+      <span class="pill">${showConfirmedGroups ? "Manage" : "Review"} ${num(display.length)} of ${num(groups.length)} groups</span>
     </div>
     <div class="smart-group-list">
       ${display.length
         ? display.map((entry) => smartConfirmGroup(key, entry.group, entry.index)).join("")
-        : `<div class="empty">No pending mapping groups for this section.</div>`}
+        : `<div class="empty">${esc(emptyText)}</div>`}
     </div>
   </section>`;
 }
