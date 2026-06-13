@@ -268,14 +268,16 @@ function smartConfirmSection(key, groups) {
       );
     });
   const visible = ranked.filter((entry) => groupNeedsConfirm(entry.group) > 0).slice(0, 25);
-  const display = visible.length ? visible : ranked.slice(0, 25);
+  const display = visible;
   return `<section class="smart-section">
     <div class="smart-section-head">
       <h3>${esc(meta.label)}</h3>
       <span class="pill">Showing ${num(display.length)} of ${num(groups.length)} groups</span>
     </div>
     <div class="smart-group-list">
-      ${display.map((entry) => smartConfirmGroup(key, entry.group, entry.index)).join("")}
+      ${display.length
+        ? display.map((entry) => smartConfirmGroup(key, entry.group, entry.index)).join("")
+        : `<div class="empty">No pending mapping groups for this section.</div>`}
     </div>
   </section>`;
 }
@@ -284,9 +286,16 @@ function smartConfirmGroup(key, group, index) {
   const inputId = `smart-${key}-${index}`;
   const needsConfirm = groupNeedsConfirm(group);
   const confidence = `${percent(group.min_confidence)}-${percent(group.max_confidence)}`;
+  const isRemaining = isRemainingMappingGroup(group);
+  const actions = isRemaining
+    ? `<button class="small" onclick="mappingGroupAction('${key}', ${index}, 'edit')">Save New Mapping</button>
+       <button class="small ghost" onclick="mappingGroupAction('${key}', ${index}, 'reject')">Reject</button>`
+    : `<button class="small" onclick="mappingGroupAction('${key}', ${index}, 'approve')">Confirm Group</button>
+       <button class="small secondary" onclick="mappingGroupAction('${key}', ${index}, 'edit')">Save Edited</button>
+       <button class="small ghost" onclick="mappingGroupAction('${key}', ${index}, 'reject')">Reject</button>`;
   return `<div class="smart-group">
     <div class="smart-group-main">
-      <span class="eyebrow">${needsConfirm ? `${num(needsConfirm)} need confirm` : "Confirmed"}</span>
+      <span class="eyebrow">${isRemaining ? "Create new mapping" : needsConfirm ? `${num(needsConfirm)} need confirm` : "Confirmed"}</span>
       ${smartGroupValueControl(key, inputId, group.standard_value)}
       <div class="smart-metrics">
         <span>${num(group.alias_count)} aliases</span>
@@ -297,9 +306,7 @@ function smartConfirmGroup(key, group, index) {
       ${aliasChecklist(key, group, index)}
     </div>
     <div class="smart-group-actions">
-      <button class="small" onclick="mappingGroupAction('${key}', ${index}, 'approve')">Confirm Group</button>
-      <button class="small secondary" onclick="mappingGroupAction('${key}', ${index}, 'edit')">Save Edited</button>
-      <button class="small ghost" onclick="mappingGroupAction('${key}', ${index}, 'reject')">Reject</button>
+      ${actions}
     </div>
   </div>`;
 }
@@ -318,12 +325,13 @@ function aliasChecklist(key, group, index) {
   if (!items.length) return "";
   const controlKey = groupControlKey(key, index);
   const checkedCount = confirmableGroupIds(group).length;
+  const isRemaining = isRemainingMappingGroup(group);
   const rows = items.map((item) => {
     const itemId = Number(item.id || 0);
     const isMaster = Number(item.is_master || 0) === 1;
     const isRejected = item.status === "Rejected";
     const checked = !isRejected ? "checked" : "";
-    const disabled = isMaster || !itemId ? "disabled" : "";
+    const disabled = !itemId ? "disabled" : "";
     const rowClass = [
       "alias-check-row",
       isMaster ? "alias-master" : "",
@@ -343,7 +351,7 @@ function aliasChecklist(key, group, index) {
   return `<div class="alias-review">
     <div class="alias-review-head">
       <span>${num(checkedCount)} selected for confirmation</span>
-      <span>Uncheck aliases to remove them from this master group.</span>
+      <span>${isRemaining ? "Select aliases, type the new master name, then Save Edited." : "Uncheck aliases to move them into Remaining / Create New Mapping."}</span>
     </div>
     <div class="alias-check-list">${rows}</div>
   </div>`;
@@ -404,6 +412,10 @@ function excludedGroupIds(key, index, group) {
 function isGenericMappingGroup(group) {
   const value = String(group.standard_value || "").toLowerCase();
   return value.includes("to the order") || value === "unknown" || value === "n/a";
+}
+
+function isRemainingMappingGroup(group) {
+  return String(group.standard_value || "").toLowerCase() === "remaining / create new mapping";
 }
 
 async function mappingGroupAction(key, index, action, silent = false) {

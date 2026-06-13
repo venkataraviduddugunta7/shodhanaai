@@ -38,6 +38,7 @@ STANDARD_PRODUCTS = [
 ]
 
 REJECTED_COMPANY_ALIAS = "__REJECTED_COMPANY_ALIAS__"
+REMAINING_MAPPING_VALUE = "Remaining / Create New Mapping"
 
 COLUMN_ALIASES = {
     "shipment_date": ["date", "shipment date", "export date", "import date", "invoice date"],
@@ -1050,13 +1051,15 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
 
 
 def _mapping_group_needs_review_count(group):
-    active_alias_count = int(group.get("active_alias_count") or 0)
-    if active_alias_count < 2:
-        return 0
     unconfirmed = [
         item for item in group.get("items", [])
         if item.get("status") != "Rejected" and not int(item.get("is_master") or 0)
     ]
+    if simple_key(group.get("standard_value")) == simple_key(REMAINING_MAPPING_VALUE):
+        return len(unconfirmed)
+    active_alias_count = int(group.get("active_alias_count") or 0)
+    if active_alias_count < 2:
+        return 0
     return len(unconfirmed)
 
 
@@ -1197,6 +1200,8 @@ def update_mapping_group(kind, ids, action, value="", excluded_ids=None):
         approved = (value or rows[0].get(approved_column) or rows[0].get(suggested_column) or "").strip()
         if not approved:
             raise ValueError("Approved group value cannot be blank.")
+        if simple_key(approved) == simple_key(REMAINING_MAPPING_VALUE):
+            raise ValueError("Enter the new master mapping name before saving aliases from Remaining / Create New Mapping.")
         conn.execute(
             f"""
             update {table}
@@ -1216,13 +1221,19 @@ def update_mapping_group(kind, ids, action, value="", excluded_ids=None):
             conn.execute(
                 f"""
                 update {table}
-                set status = 'Rejected',
+                set status = 'Pending',
+                    {suggested_column} = ?,
                     {approved_column} = '',
+                    confidence_score = case when confidence_score > 0.65 then 0.65 else confidence_score end,
                     reason_for_suggestion = ?,
                     is_master = 0
                 where id in ({excluded_placeholders})
                 """,
-                ["Removed from this Smart Confirm group. Review or edit separately if it belongs to another master value.", *excluded_ids],
+                [
+                    REMAINING_MAPPING_VALUE,
+                    "Removed from the previous Smart Confirm group. Select it with other remaining aliases and save a new master mapping.",
+                    *excluded_ids,
+                ],
             )
             excluded_count = conn.execute(
                 f"select changes() as changed"

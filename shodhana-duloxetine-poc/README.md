@@ -92,7 +92,9 @@ The system groups aliases by the suggested master value:
 - Company groups: importer/exporter spelling variants under one standard company name.
 - Country groups: country aliases under one standard country.
 
-The reviewer can confirm the whole group, edit the master value, or reject the group. Every alias has a checkbox: uncheck a wrong alias before `Confirm Group` or `Save Edited` to remove it from that master group. A removed company alias is blocked from being immediately added back by fuzzy matching. `Approve Confident` approves high-confidence pending groups and immediately re-runs cleaning.
+The reviewer can confirm the whole group, edit the master value, or reject the group. Every alias has a checkbox, including high-confidence aliases. If an alias does not belong in that group, uncheck it before `Confirm Group` or `Save Edited`. The unchecked alias moves into `Remaining / Create New Mapping`, where the reviewer can select one or more aliases, type a new master product/company/country name, and click `Save New Mapping`.
+
+Confirmed groups disappear from the Smart Confirm modal. Only groups that still need a decision remain visible, which keeps the review focused during a client demo. `Approve Confident` approves high-confidence pending groups and immediately re-runs cleaning.
 
 Approved mappings stay in the SQLite database. On the next upload, the same raw name or a very strong normalized company match is applied automatically, so the team does not approve the same company/product/country again.
 
