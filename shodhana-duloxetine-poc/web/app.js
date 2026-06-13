@@ -92,6 +92,12 @@ function renderImportResult(result) {
     : JSON.stringify(result, null, 2);
 }
 
+function renderProductOptionDatalist() {
+  const datalist = document.getElementById("standardProductOptions");
+  if (!datalist) return;
+  datalist.innerHTML = STANDARD_PRODUCTS.map((option) => `<option value="${esc(option)}"></option>`).join("");
+}
+
 function dashboardFilters(prefix = "dash") {
   return {
     product_category: document.getElementById(`${prefix}Product`)?.value || "",
@@ -211,7 +217,7 @@ function renderSmartConfirm(groups) {
   if (!container) return;
   container.innerHTML = Object.entries(GROUP_KINDS).map(([key, meta]) => {
     const rows = groups[key] || [];
-    const pending = rows.reduce((sum, group) => sum + Number(group.pending_count || 0), 0);
+    const needsConfirm = rows.reduce((sum, group) => sum + groupNeedsConfirm(group), 0);
     const approved = rows.reduce((sum, group) => sum + Number(group.approved_count || 0), 0);
     const aliases = rows.reduce((sum, group) => sum + Number(group.alias_count || 0), 0);
     return `<div class="smart-card">
@@ -221,7 +227,7 @@ function renderSmartConfirm(groups) {
       </div>
       <div class="smart-metrics">
         <span>${num(aliases)} aliases</span>
-        <span>${num(pending)} pending</span>
+        <span>${num(needsConfirm)} need confirm</span>
         <span>${num(approved)} approved</span>
       </div>
       <button class="small secondary" onclick="openSmartConfirmModal('${key}')">Review Groups</button>
@@ -251,14 +257,17 @@ function smartConfirmSection(key, groups) {
     .sort((left, right) => {
       const leftReview = String(left.group.standard_value || "").toLowerCase().includes("review required") ? 1 : 0;
       const rightReview = String(right.group.standard_value || "").toLowerCase().includes("review required") ? 1 : 0;
+      const leftGeneric = isGenericMappingGroup(left.group) ? 1 : 0;
+      const rightGeneric = isGenericMappingGroup(right.group) ? 1 : 0;
       return (
-        leftReview - rightReview
-        || right.group.pending_count - left.group.pending_count
+        leftGeneric - rightGeneric
+        || leftReview - rightReview
+        || groupNeedsConfirm(right.group) - groupNeedsConfirm(left.group)
         || Number(right.group.max_confidence || 0) - Number(left.group.max_confidence || 0)
         || Number(right.group.alias_count || 0) - Number(left.group.alias_count || 0)
       );
     });
-  const visible = ranked.filter((entry) => Number(entry.group.pending_count || 0) > 0).slice(0, 25);
+  const visible = ranked.filter((entry) => groupNeedsConfirm(entry.group) > 0).slice(0, 25);
   const display = visible.length ? visible : ranked.slice(0, 25);
   return `<section class="smart-section">
     <div class="smart-section-head">
@@ -273,15 +282,16 @@ function smartConfirmSection(key, groups) {
 
 function smartConfirmGroup(key, group, index) {
   const inputId = `smart-${key}-${index}`;
-  const pending = Number(group.pending_count || 0);
+  const needsConfirm = groupNeedsConfirm(group);
   const confidence = `${percent(group.min_confidence)}-${percent(group.max_confidence)}`;
   const samples = (group.samples || []).map((sample) => `<li>${esc(sample)}</li>`).join("");
   return `<div class="smart-group">
     <div class="smart-group-main">
-      <span class="eyebrow">${pending ? `${num(pending)} pending` : "Confirmed"}</span>
+      <span class="eyebrow">${needsConfirm ? `${num(needsConfirm)} need confirm` : "Confirmed"}</span>
       ${smartGroupValueControl(key, inputId, group.standard_value)}
       <div class="smart-metrics">
         <span>${num(group.alias_count)} aliases</span>
+        <span>${num(group.master_count || 0)} masters</span>
         <span>${confidence}</span>
         ${group.source_roles ? `<span>${esc(group.source_roles)}</span>` : ""}
       </div>
@@ -297,11 +307,18 @@ function smartConfirmGroup(key, group, index) {
 
 function smartGroupValueControl(key, inputId, value) {
   if (key === "products") {
-    return `<select class="smart-value" id="${inputId}">
-      ${STANDARD_PRODUCTS.map((option) => `<option value="${esc(option)}" ${option === value ? "selected" : ""}>${esc(option)}</option>`).join("")}
-    </select>`;
+    return `<input class="smart-value" list="standardProductOptions" id="${inputId}" value="${esc(value)}">`;
   }
   return `<input class="smart-value" id="${inputId}" value="${esc(value)}">`;
+}
+
+function groupNeedsConfirm(group) {
+  return Math.max(0, Number(group.alias_count || 0) - Number(group.master_count || 0));
+}
+
+function isGenericMappingGroup(group) {
+  const value = String(group.standard_value || "").toLowerCase();
+  return value.includes("to the order") || value === "unknown" || value === "n/a";
 }
 
 async function mappingGroupAction(key, index, action, silent = false) {
@@ -329,13 +346,13 @@ async function approveConfidentGroups(button) {
   await withBusy(button, "Approving", async () => {
     let updated = 0;
     for (const key of Object.keys(GROUP_KINDS)) {
-      const groups = mappingGroupData[key] || [];
+        const groups = mappingGroupData[key] || [];
       for (let index = 0; index < groups.length; index += 1) {
         const group = groups[index];
-        const pending = Number(group.pending_count || 0);
+        const needsConfirm = groupNeedsConfirm(group);
         const minConfidence = Number(group.min_confidence || 0);
         const reviewRequired = String(group.standard_value || "").toLowerCase().includes("review required");
-        if (pending && minConfidence >= 0.9 && !reviewRequired) {
+        if (needsConfirm && minConfidence >= 0.9 && !reviewRequired && !isGenericMappingGroup(group)) {
           await postJSON("/api/mapping-group-action", {
             kind: GROUP_KINDS[key].kind,
             ids: group.ids,
@@ -1065,9 +1082,7 @@ function renderCountryReview(rows) {
 }
 
 function productSelect(id, value) {
-  return `<select class="inline-edit" id="product-map-${id}">
-    ${STANDARD_PRODUCTS.map((option) => `<option value="${esc(option)}" ${option === value ? "selected" : ""}>${esc(option)}</option>`).join("")}
-  </select>`;
+  return `<input class="inline-edit" list="standardProductOptions" id="product-map-${id}" value="${esc(value)}">`;
 }
 
 async function mappingAction(kind, id, action) {
@@ -1235,6 +1250,7 @@ function setTooltipTitles() {
 }
 
 setTooltipTitles();
+renderProductOptionDatalist();
 window.addEventListener("popstate", async () => {
   const page = pathToPage(window.location.pathname);
   if (page === "opportunity-detail") await loadOpportunityDetailFromPath();

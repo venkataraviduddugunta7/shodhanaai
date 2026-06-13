@@ -881,8 +881,6 @@ def update_mapping(kind, mapping_id, action, value=""):
             approved = ""
         else:
             approved = (value or row.get(suggested_column) or "").strip()
-            if kind == "product" and approved not in STANDARD_PRODUCTS:
-                raise ValueError("Choose a valid standard product.")
             if not approved:
                 raise ValueError("Approved value cannot be blank.")
             conn.execute(
@@ -933,8 +931,6 @@ def update_mapping_group(kind, ids, action, value=""):
             return {"kind": kind, "status": "Rejected", "updated": len(rows), "approved": ""}
 
         approved = (value or rows[0].get(approved_column) or rows[0].get(suggested_column) or "").strip()
-        if kind == "product" and approved not in STANDARD_PRODUCTS:
-            raise ValueError("Choose a valid standard product.")
         if not approved:
             raise ValueError("Approved group value cannot be blank.")
         conn.execute(

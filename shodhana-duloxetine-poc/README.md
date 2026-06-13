@@ -96,6 +96,14 @@ The reviewer can confirm the whole group, edit the master value, or reject the g
 
 Approved mappings stay in the SQLite database. On the next upload, the same raw name or a very strong normalized company match is applied automatically, so the team does not approve the same company/product/country again.
 
+The app separates system suggestions from confirmed configuration:
+
+- System suggestions can be recalculated as the cleaning rules improve.
+- User-confirmed mappings are saved as master configuration.
+- Product masters can be edited into subcategories such as `Duloxetine Pellets 17%`, `Duloxetine Pellets 22.5%`, or `Duloxetine Pellets 25%`.
+- Company masters club variants like `EVA PHARMA`, `EVA PHARMA FOR PHARMACEUTICALS`, and `EVA PHARMA FOR PHARMACEUTICALSAND MEDICAL APPLIANCES SA`.
+- Future AI/LLM support should suggest difficult mappings, but the approved result should still be stored in these mapping tables.
+
 ### How To Approve Mappings
 
 For product rows, choose one of:

@@ -133,7 +133,7 @@ def best_mapping_match(value, mapping, key_func=simple_key):
 
 
 def pellet_strength_product(text):
-    matches = re.findall(r"\b(\d+(?:\.\d+)?)\s*(?:%|percent)", str(text or "").lower())
+    matches = re.findall(r"\b(\d+(?:\.\d+)?)\s*(?:%|percent|pct)", str(text or "").lower())
     for match in matches:
         strength = safe_float(match)
         if 16 <= strength <= 18.5:
@@ -152,6 +152,7 @@ def is_reference_or_impurity(simple):
             "reference standard",
             "ref standard",
             "working standard",
+            " ws ",
             "related compound",
             "compound h",
             "compound f",
