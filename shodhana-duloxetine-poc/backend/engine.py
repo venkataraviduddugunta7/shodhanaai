@@ -17,6 +17,7 @@ from .normalization import (
     matching_company_key,
     market_category,
     normalize_company,
+    normalize_country,
     parse_month,
     parse_year,
     safe_float,
@@ -51,6 +52,7 @@ def seed_files():
     SEED_DIR.mkdir(parents=True, exist_ok=True)
     product = SEED_DIR / "product_mappings.csv"
     company = SEED_DIR / "company_mappings.csv"
+    country = SEED_DIR / "country_mappings.csv"
     if not product.exists():
         product.write_text(
             "raw,standard,notes\n"
@@ -71,6 +73,20 @@ def seed_files():
             "SHODHANA LABORATORIES PRIVATE LIMITED,SHODHANA LABORATORIES,Self supplier\n"
             "SHODHANA LABORATORIES P LTD,SHODHANA LABORATORIES,Self supplier\n"
             "SHODHANA LABORATORIES PVT LTD,SHODHANA LABORATORIES,Self supplier\n",
+            encoding="utf-8",
+        )
+    if not country.exists():
+        country.write_text(
+            "raw,standard,notes\n"
+            "USA,United States,Country alias\n"
+            "US,United States,Country alias\n"
+            "United States Of America,United States,Country alias\n"
+            "UK,United Kingdom,Country alias\n"
+            "UAE,United Arab Emirates,Country alias\n"
+            "Republic Of Korea,South Korea,Country alias\n"
+            "Korea,South Korea,Country alias\n"
+            "Russian Federation,Russia,Country alias\n"
+            "Turkiye,Turkey,Country alias\n",
             encoding="utf-8",
         )
 
@@ -124,6 +140,7 @@ def import_trade_file(path, original_name, replace=True):
     cleaned_rows = []
     product_mapping_rows = {}
     company_mapping_rows = {}
+    country_mapping_rows = {}
     duplicate_keys = set()
     duplicate_count = 0
     raw_rows_to_insert = []
@@ -170,8 +187,28 @@ def import_trade_file(path, original_name, replace=True):
             ),
         ]:
             _merge_company_mapping(company_mapping_rows, role, raw_name, standard_name, confidence, status, reason)
+        for role, raw_country, standard_country, confidence, status, reason in [
+            (
+                "Importer",
+                cleaned["raw_importer_country"],
+                cleaned["importer_country"],
+                cleaned["importer_country_confidence"],
+                cleaned["importer_country_status"],
+                cleaned["importer_country_reason"],
+            ),
+            (
+                "Exporter",
+                cleaned["raw_exporter_country"],
+                cleaned["exporter_country"],
+                cleaned["exporter_country_confidence"],
+                cleaned["exporter_country_status"],
+                cleaned["exporter_country_reason"],
+            ),
+        ]:
+            _merge_country_mapping(country_mapping_rows, role, raw_country, standard_country, confidence, status, reason)
 
     quality = quality_summary(rows, cleaned_rows, duplicate_count)
+    _cluster_company_mappings(company_mapping_rows)
     with connect() as conn:
         if replace:
             reset_trade_data(conn)
@@ -245,6 +282,7 @@ def import_trade_file(path, original_name, replace=True):
             )
         _replace_product_mappings(conn, product_mapping_rows.values())
         _replace_company_mappings(conn, company_mapping_rows.values())
+        _replace_country_mappings(conn, country_mapping_rows.values())
 
     return {
         "upload_id": upload_id,
@@ -267,10 +305,17 @@ def import_mapping_file(kind, path):
     rows = read_table(path)
     if not rows:
         raise ValueError("No mapping rows found.")
-    target = SEED_DIR / ("product_mappings.csv" if kind == "product_mapping" else "company_mappings.csv")
+    targets = {
+        "product_mapping": "product_mappings.csv",
+        "company_mapping": "company_mappings.csv",
+        "country_mapping": "country_mappings.csv",
+    }
+    target = SEED_DIR / targets.get(kind, "company_mappings.csv")
     normalized_rows = []
     for row in rows:
         raw = _first_present(row, ["raw", "alias", "raw product description", "product description", "raw company name", "company name"])
+        if not raw:
+            raw = _first_present(row, ["raw country", "country", "country name"])
         standard = _first_present(
             row,
             [
@@ -280,8 +325,10 @@ def import_mapping_file(kind, path):
                 "approved_standard",
                 "approved standard product",
                 "approved standard company",
+                "approved standard country",
                 "standard product",
                 "standard company",
+                "standard country",
             ],
         )
         if raw and standard:
@@ -620,7 +667,12 @@ def pitch_row_response(row, detail):
 
 
 def mappings(kind, limit=5000):
-    table = "product_mappings" if kind == "products" else "company_mappings"
+    table_by_kind = {
+        "products": "product_mappings",
+        "companies": "company_mappings",
+        "countries": "country_mappings",
+    }
+    table = table_by_kind.get(kind, "company_mappings")
     with connect() as conn:
         rows = conn.execute(f"select * from {table} order by confidence_score asc, id asc limit ?", (limit,)).fetchall()
     return rows_to_dicts(rows)
@@ -653,17 +705,34 @@ def cleaning_review():
                 """
             ).fetchall()
         )
+        country_rows = rows_to_dicts(
+            conn.execute(
+                """
+                select * from country_mappings
+                order by
+                  case status when 'Pending' then 0 when 'Rejected' then 1 else 2 end,
+                  confidence_score asc,
+                  id asc
+                limit 5000
+                """
+            ).fetchall()
+        )
         issue_rows = review_records_for_conn(conn, "pending", limit=150)
-    return {"summary": summary, "products": product_rows, "companies": company_rows, "issue_rows": issue_rows}
+    return {"summary": summary, "products": product_rows, "companies": company_rows, "countries": country_rows, "issue_rows": issue_rows}
 
 
 def update_mapping(kind, mapping_id, action, value=""):
     if action not in {"approve", "edit", "reject"}:
         raise ValueError("Mapping action must be approve, edit, or reject.")
-    table = "product_mappings" if kind == "product" else "company_mappings"
+    config = {
+        "product": ("product_mappings", "suggested_standard_product", "approved_standard_product"),
+        "company": ("company_mappings", "suggested_standard_company_name", "approved_standard_company_name"),
+        "country": ("country_mappings", "suggested_standard_country_name", "approved_standard_country_name"),
+    }
+    if kind not in config:
+        raise ValueError("Mapping kind must be product, company, or country.")
+    table, suggested_column, approved_column = config[kind]
     id_column = "id"
-    suggested_column = "suggested_standard_product" if kind == "product" else "suggested_standard_company_name"
-    approved_column = "approved_standard_product" if kind == "product" else "approved_standard_company_name"
     with connect() as conn:
         row = conn.execute(f"select * from {table} where {id_column} = ?", (mapping_id,)).fetchone()
         if not row:
@@ -719,6 +788,7 @@ def rerun_cleaning():
 
         approved_products = approved_product_map(conn)
         approved_companies = approved_company_map(conn)
+        approved_countries = approved_country_map(conn)
         conn.execute("delete from clean_trade_records where upload_id = ?", (upload["id"],))
         conn.execute("delete from generated_pitches")
         duplicate_keys = set()
@@ -726,7 +796,13 @@ def rerun_cleaning():
         cleaned_rows = []
         for raw in raw_records:
             row = json.loads(raw["raw_json"])
-            cleaned = clean_row(row, column_map, approved_products=approved_products, approved_companies=approved_companies)
+            cleaned = clean_row(
+                row,
+                column_map,
+                approved_products=approved_products,
+                approved_companies=approved_companies,
+                approved_countries=approved_countries,
+            )
             duplicate_key = cleaned["duplicate_key"]
             if duplicate_key in duplicate_keys:
                 duplicate_count += 1
@@ -789,9 +865,10 @@ def export_clean_csv(path):
     return write_csv(path, rows)
 
 
-def clean_row(row, column_map, approved_products=None, approved_companies=None):
+def clean_row(row, column_map, approved_products=None, approved_companies=None, approved_countries=None):
     approved_products = approved_products or {}
     approved_companies = approved_companies or {}
+    approved_countries = approved_countries or {}
 
     def value(name):
         header = column_map.get(name)
@@ -810,6 +887,16 @@ def clean_row(row, column_map, approved_products=None, approved_companies=None):
     exporter_raw = str(value("exporter_name")).strip()
     importer_standard, importer_confidence, importer_status, importer_reason = clean_company_name(importer_raw, approved_companies)
     exporter_standard, exporter_confidence, exporter_status, exporter_reason = clean_company_name(exporter_raw, approved_companies)
+    importer_country_raw = str(value("importer_country")).strip()
+    exporter_country_raw = str(value("exporter_country")).strip()
+    importer_country, importer_country_confidence, importer_country_status, importer_country_reason = clean_country_name(
+        importer_country_raw,
+        approved_countries,
+    )
+    exporter_country, exporter_country_confidence, exporter_country_status, exporter_country_reason = clean_country_name(
+        exporter_country_raw,
+        approved_countries,
+    )
     quantity = safe_float(value("quantity"))
     units = str(value("units")).strip()
     quantity_kg, quantity_status = convert_to_kg(quantity, units)
@@ -817,16 +904,28 @@ def clean_row(row, column_map, approved_products=None, approved_companies=None):
     price = value_usd / quantity_kg if quantity_kg and value_usd else None
     shipment_date = str(value("shipment_date")).strip()
     year = parse_year(shipment_date)
-    importer_country = str(value("importer_country")).strip()
     data_status = "Clean"
-    if product_status != "Approved" or standard_product == "Other / Review Required" or quantity_status != "Valid KG" or not price:
+    if (
+        product_status != "Approved"
+        or standard_product == "Other / Review Required"
+        or quantity_status != "Valid KG"
+        or not price
+        or importer_country in {"", "N/A"}
+    ):
         data_status = "Needs Manual Review"
+    duplicate_product = standard_product if product_status == "Approved" else product_raw
+    duplicate_importer = importer_standard if importer_status == "Approved" else importer_raw
+    duplicate_exporter = exporter_standard if exporter_status == "Approved" else exporter_raw
+    duplicate_importer_country = importer_country if importer_country_status == "Approved" else importer_country_raw
+    duplicate_exporter_country = exporter_country if exporter_country_status == "Approved" else exporter_country_raw
     duplicate_key = "|".join(
         [
             shipment_date.lower(),
-            simple_key(product_raw),
-            simple_key(importer_raw),
-            simple_key(exporter_raw),
+            simple_key(duplicate_product),
+            simple_key(duplicate_importer),
+            simple_key(duplicate_exporter),
+            simple_key(duplicate_importer_country),
+            simple_key(duplicate_exporter_country),
             str(round(quantity_kg or 0, 6)),
             str(round(value_usd, 4)),
         ]
@@ -846,14 +945,22 @@ def clean_row(row, column_map, approved_products=None, approved_companies=None):
         "importer_confidence": importer_confidence,
         "importer_status": importer_status,
         "importer_reason": importer_reason,
+        "raw_importer_country": importer_country_raw,
         "importer_country": importer_country,
+        "importer_country_confidence": importer_country_confidence,
+        "importer_country_status": importer_country_status,
+        "importer_country_reason": importer_country_reason,
         "importer_port": str(value("importer_port")).strip(),
         "raw_exporter_name": exporter_raw,
         "standard_exporter_name": exporter_standard,
         "exporter_confidence": exporter_confidence,
         "exporter_status": exporter_status,
         "exporter_reason": exporter_reason,
-        "exporter_country": str(value("exporter_country")).strip(),
+        "raw_exporter_country": exporter_country_raw,
+        "exporter_country": exporter_country,
+        "exporter_country_confidence": exporter_country_confidence,
+        "exporter_country_status": exporter_country_status,
+        "exporter_country_reason": exporter_country_reason,
         "exporter_port": str(value("exporter_port")).strip(),
         "market_category": market_category(importer_country),
         "quantity": quantity,
@@ -873,6 +980,13 @@ def clean_company_name(raw_name, approved_companies):
     if direct:
         return direct, 1.0, "Approved", "Approved company mapping from Cleaning Review."
     return normalize_company(raw_name)
+
+
+def clean_country_name(raw_country, approved_countries):
+    direct = approved_countries.get(simple_key(raw_country))
+    if direct:
+        return direct, 1.0, "Approved", "Approved country mapping from Cleaning Review."
+    return normalize_country(raw_country)
 
 
 def approved_product_map(conn):
@@ -899,6 +1013,17 @@ def approved_company_map(conn):
         mapping[simple_key(row["raw_company_name"])] = row["approved_standard_company_name"]
         mapping[matching_company_key(row["raw_company_name"])] = row["approved_standard_company_name"]
     return mapping
+
+
+def approved_country_map(conn):
+    rows = conn.execute(
+        """
+        select raw_country_name, approved_standard_country_name
+        from country_mappings
+        where status = 'Approved' and coalesce(approved_standard_country_name, '') != ''
+        """
+    ).fetchall()
+    return {simple_key(row["raw_country_name"]): row["approved_standard_country_name"] for row in rows}
 
 
 def insert_clean_record(conn, upload_id, raw_id, cleaned):
@@ -983,11 +1108,17 @@ def cleaning_summary(conn):
     company_mappings_applied = conn.execute(
         "select count(*) from company_mappings where status = 'Approved' and coalesce(approved_standard_company_name, '') != ''"
     ).fetchone()[0]
+    country_mappings_applied = conn.execute(
+        "select count(*) from country_mappings where status = 'Approved' and coalesce(approved_standard_country_name, '') != ''"
+    ).fetchone()[0]
     pending_product_mappings = conn.execute(
         "select count(*) from product_mappings where status = 'Pending'"
     ).fetchone()[0]
     pending_company_mappings = conn.execute(
         "select count(*) from company_mappings where status = 'Pending'"
+    ).fetchone()[0]
+    pending_country_mappings = conn.execute(
+        "select count(*) from country_mappings where status = 'Pending'"
     ).fetchone()[0]
     stats.update(
         {
@@ -995,8 +1126,10 @@ def cleaning_summary(conn):
             "cleaned_records": latest_upload_data.get("clean_count", stats.get("total_records", 0)),
             "product_mappings_applied": product_mappings_applied,
             "company_mappings_applied": company_mappings_applied,
+            "country_mappings_applied": country_mappings_applied,
             "pending_product_mappings": pending_product_mappings,
             "pending_company_mappings": pending_company_mappings,
+            "pending_country_mappings": pending_country_mappings,
             "records_missing_value_or_quantity": stats.get("missing_value_or_quantity_records", 0),
         }
     )
@@ -1407,6 +1540,28 @@ def _replace_company_mappings(conn, rows):
         )
 
 
+def _replace_country_mappings(conn, rows):
+    for row in rows:
+        conn.execute(
+            """
+            insert into country_mappings(
+                raw_country_name, suggested_standard_country_name, confidence_score,
+                reason_for_suggestion, source_roles, approved_standard_country_name, status, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["raw_country_name"],
+                row["suggested_standard_country_name"],
+                row["confidence_score"],
+                row.get("reason_for_suggestion", ""),
+                row.get("source_roles", ""),
+                row["approved_standard_country_name"],
+                row["status"],
+                int(time.time()),
+            ),
+        )
+
+
 def _merge_company_mapping(mapping_rows, role, raw_name, standard_name, confidence, status, reason):
     key = simple_key(raw_name)
     if key not in mapping_rows:
@@ -1430,6 +1585,69 @@ def _merge_company_mapping(mapping_rows, role, raw_name, standard_name, confiden
         current["reason_for_suggestion"] = reason
         current["approved_standard_company_name"] = standard_name if status == "Approved" else current.get("approved_standard_company_name", "")
         current["status"] = status if current["status"] != "Approved" else current["status"]
+
+
+def _merge_country_mapping(mapping_rows, role, raw_name, standard_name, confidence, status, reason):
+    key = simple_key(raw_name)
+    if not key or key in {"N A", "NA", "NONE", "UNKNOWN", "NOT AVAILABLE"}:
+        key = "N/A"
+    if key not in mapping_rows:
+        mapping_rows[key] = {
+            "raw_country_name": raw_name or "N/A",
+            "suggested_standard_country_name": standard_name,
+            "confidence_score": confidence,
+            "reason_for_suggestion": reason,
+            "source_roles": role,
+            "approved_standard_country_name": standard_name if status == "Approved" else "",
+            "status": status,
+        }
+        return
+    current = mapping_rows[key]
+    roles = set(filter(None, [part.strip() for part in current.get("source_roles", "").split(",")]))
+    roles.add(role)
+    current["source_roles"] = ", ".join(sorted(roles))
+    if confidence > current.get("confidence_score", 0):
+        current["suggested_standard_country_name"] = standard_name
+        current["confidence_score"] = confidence
+        current["reason_for_suggestion"] = reason
+        current["approved_standard_country_name"] = standard_name if status == "Approved" else current.get("approved_standard_country_name", "")
+        current["status"] = status if current["status"] != "Approved" else current["status"]
+
+
+def _cluster_company_mappings(mapping_rows):
+    groups = {}
+    for key, row in mapping_rows.items():
+        cluster_key = matching_company_key(row.get("raw_company_name", ""))
+        if len(cluster_key) < 3 or cluster_key in {"TO ORDER", "UNKNOWN"}:
+            continue
+        groups.setdefault(cluster_key, []).append(row)
+
+    for rows in groups.values():
+        suggested_values = {simple_key(row.get("suggested_standard_company_name", "")) for row in rows}
+        raw_values = {simple_key(row.get("raw_company_name", "")) for row in rows}
+        if len(rows) < 2 or (len(suggested_values) == 1 and len(raw_values) == 1):
+            continue
+        canonical = _best_company_canonical(rows)
+        for row in rows:
+            if row.get("status") == "Approved":
+                continue
+            row["suggested_standard_company_name"] = canonical
+            row["confidence_score"] = max(float(row.get("confidence_score") or 0), 0.84)
+            row["status"] = "Pending"
+            row["approved_standard_company_name"] = ""
+            row["reason_for_suggestion"] = (
+                "Similar normalized company names found in the uploaded document. "
+                "Approve to club these importer/exporter variants under one master company."
+            )
+
+
+def _best_company_canonical(rows):
+    names = [simple_key(row.get("suggested_standard_company_name") or row.get("raw_company_name")) for row in rows]
+    def score(name):
+        has_private = 1 if "PRIVATE LIMITED" in name else 0
+        has_limited = 1 if "LIMITED" in name else 0
+        return (has_private, has_limited, len(name))
+    return max(names, key=score) if names else "UNKNOWN"
 
 
 def analytics_where(filters, extra_clauses=None):

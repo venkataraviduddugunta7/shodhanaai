@@ -30,6 +30,7 @@
       <button class="nav-item" data-page="opportunities" onclick="showPage('opportunities')">Opportunities</button>
       <button class="nav-item" data-page="products" onclick="showPage('products')">Product Mappings</button>
       <button class="nav-item" data-page="companies" onclick="showPage('companies')">Company Mappings</button>
+      <button class="nav-item" data-page="countries" onclick="showPage('countries')">Country Mappings</button>
       <button class="nav-item" data-page="pitch" onclick="showPage('pitch')">Pitch Workspace</button>
     </nav>
 
@@ -54,6 +55,7 @@
                 <option value="trade_data">Trade data Excel/CSV</option>
                 <option value="product_mapping">Product synonym master</option>
                 <option value="company_mapping">Company synonym master</option>
+                <option value="country_mapping">Country synonym master</option>
               </select>
 
               <label for="uploadFile">File</label>
@@ -97,10 +99,10 @@
         <div class="page-head">
           <div>
             <h2>Cleaning Review</h2>
-            <p>Approve, edit, or reject product and company mapping suggestions before using final dashboard numbers.</p>
+            <p>Approve, edit, or reject product, company, and country mapping suggestions before using final dashboard numbers.</p>
           </div>
           <div class="button-row">
-            <button class="secondary tip" data-tooltip="Reprocess raw records using approved product/company mappings and rebuild dashboard/opportunities." onclick="rerunCleaning(this)">Re-run Cleaning</button>
+            <button class="secondary tip" data-tooltip="Reprocess raw records using approved product, company, and country mappings and rebuild dashboard/opportunities." onclick="rerunCleaning(this)">Re-run Cleaning</button>
             <button class="ghost small tip" data-tooltip="Open the final dashboard after review." onclick="showPage('dashboard')">Dashboard</button>
           </div>
         </div>
@@ -138,7 +140,7 @@
           <div class="panel-head">
             <div>
               <h3>Product Mapping Review</h3>
-              <p>Raw product descriptions are classified into API, pellets, placebo pellets, or review required.</p>
+              <p>Raw product descriptions and subcategory variants are clubbed into API, pellets, placebo pellets, or review required.</p>
             </div>
             <span class="pill" id="productReviewCount">0 rows</span>
           </div>
@@ -149,11 +151,22 @@
           <div class="panel-head">
             <div>
               <h3>Company Mapping Review</h3>
-              <p>Importer and exporter names are normalized after removing legal suffixes and punctuation.</p>
+              <p>Importer and exporter names are normalized, compared for similarity, and suggested for clubbing under one master company.</p>
             </div>
             <span class="pill" id="companyReviewCount">0 rows</span>
           </div>
           <div id="companyReviewTable" class="table-wrap tall"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h3>Country Mapping Review</h3>
+              <p>Importer and exporter countries are standardized so country demand is not split by aliases or casing.</p>
+            </div>
+            <span class="pill" id="countryReviewCount">0 rows</span>
+          </div>
+          <div id="countryReviewTable" class="table-wrap tall"></div>
         </div>
       </section>
 
@@ -345,6 +358,18 @@
         </div>
         <div class="panel">
           <div id="companyMappings" class="table-wrap tall"></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-countries">
+        <div class="page-head">
+          <div>
+            <h2>Country Mapping Table</h2>
+            <p>Raw importer/exporter country names to approved standard country names.</p>
+          </div>
+        </div>
+        <div class="panel">
+          <div id="countryMappings" class="table-wrap tall"></div>
         </div>
       </section>
 

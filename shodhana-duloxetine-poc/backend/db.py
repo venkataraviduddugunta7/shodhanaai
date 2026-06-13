@@ -96,6 +96,18 @@ def init_db():
                 created_at integer not null
             );
 
+            create table if not exists country_mappings (
+                id integer primary key autoincrement,
+                raw_country_name text not null,
+                suggested_standard_country_name text not null,
+                confidence_score real not null,
+                reason_for_suggestion text,
+                source_roles text,
+                approved_standard_country_name text,
+                status text not null,
+                created_at integer not null
+            );
+
             create table if not exists generated_pitches (
                 id integer primary key autoincrement,
                 opportunity_key text not null,
@@ -117,6 +129,8 @@ def init_db():
         ensure_column(conn, "product_mappings", "reason_for_suggestion", "text")
         ensure_column(conn, "company_mappings", "reason_for_suggestion", "text")
         ensure_column(conn, "company_mappings", "source_roles", "text")
+        ensure_column(conn, "country_mappings", "reason_for_suggestion", "text")
+        ensure_column(conn, "country_mappings", "source_roles", "text")
         ensure_column(conn, "generated_pitches", "opportunity_id", "text")
         ensure_column(conn, "generated_pitches", "customer_summary", "text")
         ensure_column(conn, "generated_pitches", "buying_pattern", "text")
@@ -136,6 +150,7 @@ def ensure_column(conn, table, column, definition):
 
 def reset_trade_data(conn):
     conn.execute("delete from generated_pitches")
+    conn.execute("delete from country_mappings")
     conn.execute("delete from company_mappings")
     conn.execute("delete from product_mappings")
     conn.execute("delete from clean_trade_records")

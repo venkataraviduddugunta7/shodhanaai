@@ -166,6 +166,7 @@ async function loadReview() {
   renderReviewSummary(reviewData.summary || {});
   renderProductReview(reviewData.products || []);
   renderCompanyReview(reviewData.companies || []);
+  renderCountryReview(reviewData.countries || []);
   renderIssueRows(reviewData.issue_rows || []);
 }
 
@@ -175,6 +176,7 @@ function renderReviewSummary(summary) {
     ["Cleaned Records", summary.cleaned_records],
     ["Product Mappings Applied", summary.product_mappings_applied],
     ["Company Mappings Applied", summary.company_mappings_applied],
+    ["Country Mappings Applied", summary.country_mappings_applied],
     ["Review Required", summary.review_required_records],
     ["Valid KG Quantity", summary.valid_kg_records],
     ["Invalid Units", summary.invalid_qty_records],
@@ -182,6 +184,7 @@ function renderReviewSummary(summary) {
     ["Missing Value/Qty", summary.records_missing_value_or_quantity],
     ["Pending Product Maps", summary.pending_product_mappings],
     ["Pending Company Maps", summary.pending_company_mappings],
+    ["Pending Country Maps", summary.pending_country_mappings],
     ["Duplicates Removed", summary.duplicates_removed],
   ];
   document.getElementById("reviewSummaryCards").innerHTML = cards.map(statCard).join("");
@@ -741,12 +744,14 @@ function downloadExport(kind, source = "dashboard") {
 }
 
 async function loadMappings() {
-  const [products, companies] = await Promise.all([
+  const [products, companies, countries] = await Promise.all([
     getJSON("/api/mappings/products"),
     getJSON("/api/mappings/companies"),
+    getJSON("/api/mappings/countries"),
   ]);
   renderProductMappings(products.rows || []);
   renderCompanyMappings(companies.rows || []);
+  renderCountryMappings(countries.rows || []);
 }
 
 async function setReviewFilter(filter) {
@@ -856,6 +861,41 @@ function renderCompanyReview(rows) {
   </table>`;
 }
 
+function renderCountryReview(rows) {
+  const container = document.getElementById("countryReviewTable");
+  document.getElementById("countryReviewCount").textContent = `${rows.length} rows`;
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty">Upload trade data to create country mapping suggestions.</div>`;
+    return;
+  }
+  container.innerHTML = `<table>
+    <thead>
+      <tr>
+        <th>Raw Country Name</th>
+        <th>Suggested Standard Country Name</th>
+        <th>Confidence</th>
+        <th>Role</th>
+        <th>Reason</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>${rows.map((row) => `<tr>
+      <td><strong>${esc(row.raw_country_name)}</strong></td>
+      <td><input class="inline-edit" id="country-map-${row.id}" value="${esc(row.approved_standard_country_name || row.suggested_standard_country_name)}"></td>
+      <td class="${confidenceClass(row.confidence_score)}">${percent(row.confidence_score)}</td>
+      <td>${esc(row.source_roles || "")}</td>
+      <td class="reason-cell">${esc(row.reason_for_suggestion || "")}</td>
+      <td>${statusText(row.status)}</td>
+      <td class="action-cell"><div class="mapping-actions">
+        <button class="small" onclick="mappingAction('country', ${row.id}, 'approve')">Approve</button>
+        <button class="small secondary" onclick="mappingAction('country', ${row.id}, 'edit')">Edit</button>
+        <button class="small ghost" onclick="mappingAction('country', ${row.id}, 'reject')">Reject</button>
+      </div></td>
+    </tr>`).join("")}</tbody>
+  </table>`;
+}
+
 function productSelect(id, value) {
   return `<select class="inline-edit" id="product-map-${id}">
     ${STANDARD_PRODUCTS.map((option) => `<option value="${esc(option)}" ${option === value ? "selected" : ""}>${esc(option)}</option>`).join("")}
@@ -910,6 +950,21 @@ function renderCompanyMappings(rows) {
   </table>` : `<div class="empty">Import data to create company mapping rows.</div>`;
   document.getElementById("companyMappings").innerHTML = html;
   document.getElementById("companyMiniTable").innerHTML = html;
+}
+
+function renderCountryMappings(rows) {
+  const html = rows.length ? `<table>
+    <thead><tr><th>Raw Country Name</th><th>Suggested Standard Country</th><th>Confidence</th><th>Role</th><th>Approved</th><th>Status</th></tr></thead>
+    <tbody>${rows.map((row) => `<tr>
+      <td><strong>${esc(row.raw_country_name)}</strong></td>
+      <td>${esc(row.suggested_standard_country_name)}</td>
+      <td class="${confidenceClass(row.confidence_score)}">${percent(row.confidence_score)}</td>
+      <td>${esc(row.source_roles || "")}</td>
+      <td>${esc(row.approved_standard_country_name)}</td>
+      <td>${statusText(row.status)}</td>
+    </tr>`).join("")}</tbody>
+  </table>` : `<div class="empty">Import data to create country mapping rows.</div>`;
+  document.getElementById("countryMappings").innerHTML = html;
 }
 
 function clearFilters() {
@@ -1028,6 +1083,7 @@ function pageToPath(page) {
     review: "/cleaning-review",
     dashboard: "/dashboard",
     opportunities: "/opportunities",
+    countries: "/countries",
     "opportunity-detail": window.location.pathname.startsWith("/opportunities/") ? window.location.pathname : "/opportunities",
     pitch: window.location.pathname.startsWith("/pitch/") ? window.location.pathname : "/pitch",
   }[page] || "/";
@@ -1040,5 +1096,6 @@ function pathToPage(path) {
     "/cleaning-review": "review",
     "/dashboard": "dashboard",
     "/opportunities": "opportunities",
+    "/countries": "countries",
   }[path] || "upload";
 }

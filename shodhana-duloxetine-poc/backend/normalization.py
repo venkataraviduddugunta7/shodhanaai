@@ -7,6 +7,7 @@ from .config import SEED_DIR
 
 PRODUCT_MAP = SEED_DIR / "product_mappings.csv"
 COMPANY_MAP = SEED_DIR / "company_mappings.csv"
+COUNTRY_MAP = SEED_DIR / "country_mappings.csv"
 
 LEGAL_WORDS = {
     "PVT", "PRIVATE", "LTD", "LIMITED", "LLP", "INC", "CORP", "CORPORATION",
@@ -15,6 +16,53 @@ LEGAL_WORDS = {
 }
 
 INVALID_KG_UNITS = {"NOS", "NO", "PCS", "PC", "UNT", "UNITS", "VLS", "LOT", "CTN", "DRM"}
+
+COUNTRY_ALIASES = {
+    "ARGENTINA": "Argentina",
+    "BANGLADESH": "Bangladesh",
+    "BELGIUM": "Belgium",
+    "BRAZIL": "Brazil",
+    "CANADA": "Canada",
+    "CHILE": "Chile",
+    "CHINA": "China",
+    "COLOMBIA": "Colombia",
+    "CZECHIA": "Czech Republic",
+    "CZECH REPUBLIC": "Czech Republic",
+    "EGYPT": "Egypt",
+    "FRANCE": "France",
+    "GERMANY": "Germany",
+    "INDIA": "India",
+    "IRAN": "Iran",
+    "IRAQ": "Iraq",
+    "ISRAEL": "Israel",
+    "ITALY": "Italy",
+    "JAPAN": "Japan",
+    "KOREA": "South Korea",
+    "REPUBLIC OF KOREA": "South Korea",
+    "SOUTH KOREA": "South Korea",
+    "MEXICO": "Mexico",
+    "NETHERLANDS": "Netherlands",
+    "PAKISTAN": "Pakistan",
+    "RUSSIA": "Russia",
+    "RUSSIAN FEDERATION": "Russia",
+    "SPAIN": "Spain",
+    "SWITZERLAND": "Switzerland",
+    "TAIWAN": "Taiwan",
+    "TURKEY": "Turkey",
+    "TURKIYE": "Turkey",
+    "UAE": "United Arab Emirates",
+    "U A E": "United Arab Emirates",
+    "UNITED ARAB EMIRATES": "United Arab Emirates",
+    "UK": "United Kingdom",
+    "U K": "United Kingdom",
+    "UNITED KINGDOM": "United Kingdom",
+    "USA": "United States",
+    "U S A": "United States",
+    "US": "United States",
+    "UNITED STATES": "United States",
+    "UNITED STATES OF AMERICA": "United States",
+    "URUGUAY": "Uruguay",
+}
 
 
 def simple_key(value):
@@ -35,6 +83,15 @@ def display_company(value):
     if cleaned.startswith("TO THE ORDER OF"):
         return "TO THE ORDER OF"
     return cleaned
+
+
+def display_country(value):
+    key = simple_key(value)
+    if not key or key in {"N A", "NA", "NONE", "UNKNOWN", "NOT AVAILABLE"}:
+        return "N/A"
+    if key in COUNTRY_ALIASES:
+        return COUNTRY_ALIASES[key]
+    return " ".join(word.capitalize() for word in key.split())
 
 
 def load_mapping(path):
@@ -130,6 +187,27 @@ def normalize_company(raw_name):
     if cleaned in {"UNKNOWN", "TO THE ORDER OF"}:
         return cleaned, 0.35, "Pending", "Importer/exporter name is generic or missing."
     return cleaned, confidence, "Pending", "Normalized company text; no approved synonym match found."
+
+
+def normalize_country(raw_country):
+    mapping = load_mapping(COUNTRY_MAP)
+    key = simple_key(raw_country)
+    if not key or key in {"N A", "NA", "NONE", "UNKNOWN", "NOT AVAILABLE"}:
+        return "N/A", 0.35, "Pending", "Country is missing or generic."
+
+    direct = mapping.get(key) or COUNTRY_ALIASES.get(key)
+    if direct:
+        confidence = 1.0 if simple_key(direct) == key else 0.97
+        return direct, confidence, "Approved", "Exact country alias match."
+
+    alias_map = {**{simple_key(k): v for k, v in COUNTRY_ALIASES.items()}, **mapping}
+    fuzzy_value, fuzzy_score = best_mapping_match(raw_country, alias_map)
+    if fuzzy_value and fuzzy_score >= 0.88:
+        return fuzzy_value, round(fuzzy_score, 2), "Pending", "Strong fuzzy country match; review before approval."
+    if fuzzy_value and fuzzy_score >= 0.72:
+        return fuzzy_value, round(fuzzy_score, 2), "Pending", "Weak fuzzy country match; review before approval."
+
+    return display_country(raw_country), 0.7, "Pending", "Standardized country text; no approved country alias found."
 
 
 def safe_float(value):

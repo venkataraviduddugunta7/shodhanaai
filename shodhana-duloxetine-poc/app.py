@@ -40,7 +40,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if (
-            parsed.path in {"/", "/cleaning-review", "/dashboard", "/opportunities", "/pitch"}
+            parsed.path in {"/", "/cleaning-review", "/dashboard", "/opportunities", "/countries", "/pitch"}
             or parsed.path.startswith("/opportunities/")
             or parsed.path.startswith("/pitch/")
         ):
@@ -111,6 +111,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/mappings/companies":
             self.send_json({"rows": mappings("companies")})
             return
+        if parsed.path == "/api/mappings/countries":
+            self.send_json({"rows": mappings("countries")})
+            return
         self.send_error(404)
 
     def do_POST(self):
@@ -163,6 +166,8 @@ class Handler(BaseHTTPRequestHandler):
             result = import_mapping_file("product_mapping", stored)
         elif source_type == "company_mapping":
             result = import_mapping_file("company_mapping", stored)
+        elif source_type == "country_mapping":
+            result = import_mapping_file("country_mapping", stored)
         else:
             result = import_trade_file(stored, file_item["filename"], replace=True)
         self.send_json({"source_type": source_type, "stored_path": str(stored), **result})
