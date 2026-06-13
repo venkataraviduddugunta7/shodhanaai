@@ -935,9 +935,21 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
                 "source_roles": set(),
                 "suggested_values": set(),
                 "master_count": 0,
+                "items": [],
             },
         )
         group["ids"].append(row["id"])
+        group["items"].append(
+            {
+                "id": row["id"],
+                "raw": raw_value,
+                "suggested": suggested_value,
+                "approved": approved_value,
+                "status": row.get("status", ""),
+                "confidence": float(row.get("confidence_score") or 0),
+                "is_master": int(row.get("is_master") or 0),
+            }
+        )
         if raw_value and raw_value not in group["samples"] and len(group["samples"]) < 6:
             group["samples"].append(raw_value)
         if suggested_value:
@@ -964,6 +976,13 @@ def _mapping_groups_for_rows(rows, kind, raw_column, suggested_column, approved_
             group["standard_value"] = _best_text_canonical(group["suggested_values"] or group["samples"])
         group["source_roles"] = ", ".join(sorted(group["source_roles"]))
         group["suggested_values"] = sorted(group["suggested_values"])
+        group["items"].sort(
+            key=lambda item: (
+                int(item.get("is_master") or 0),
+                -float(item.get("confidence") or 0),
+                simple_key(item.get("raw") or ""),
+            )
+        )
         result.append(group)
     return sorted(
         result,

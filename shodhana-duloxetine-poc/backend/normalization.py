@@ -66,11 +66,28 @@ COUNTRY_ALIASES = {
     "URUGUAY": "Uruguay",
 }
 
+TRUSTED_COUNTRY_NAMES = [
+    "Afghanistan", "Albania", "Algeria", "Argentina", "Australia", "Austria",
+    "Bangladesh", "Belarus", "Belgium", "Bolivia", "Brazil", "Bulgaria",
+    "Canada", "Chile", "China", "Colombia", "Costa Rica", "Cyprus",
+    "Czech Republic", "Dominican Republic", "Egypt", "France", "Germany",
+    "Guatemala", "Hong Kong", "Hungary", "India", "Indonesia", "Iran",
+    "Iraq", "Israel", "Italy", "Japan", "Jordan", "Kazakhstan", "Kuwait",
+    "Lebanon", "Malaysia", "Malta", "Mexico", "Nepal", "Netherlands",
+    "Oman", "Pakistan", "Paraguay", "Puerto Rico", "Romania", "Russia",
+    "Saudi Arabia", "Serbia", "Singapore", "South Korea", "Spain",
+    "Sri Lanka", "Switzerland", "Syria", "Taiwan", "Thailand", "Turkey",
+    "United Arab Emirates", "United Kingdom", "United States", "Uruguay",
+]
+
 
 def simple_key(value):
     value = str(value or "").upper().replace("&", " AND ")
     value = re.sub(r"[^A-Z0-9]+", " ", value)
     return re.sub(r"\s+", " ", value).strip()
+
+
+TRUSTED_COUNTRIES = {simple_key(country) for country in TRUSTED_COUNTRY_NAMES}
 
 
 def matching_company_key(value):
@@ -254,6 +271,10 @@ def normalize_country(raw_country):
         confidence = 1.0 if simple_key(direct) == key else 0.97
         return direct, confidence, "Approved", "Exact country alias match."
 
+    display = display_country(raw_country)
+    if simple_key(display) in TRUSTED_COUNTRIES:
+        return display, 1.0, "Approved", "Trusted country master match."
+
     alias_map = {**{simple_key(k): v for k, v in COUNTRY_ALIASES.items()}, **mapping}
     fuzzy_value, fuzzy_score = best_mapping_match(raw_country, alias_map)
     if fuzzy_value and fuzzy_score >= 0.88:
@@ -261,7 +282,7 @@ def normalize_country(raw_country):
     if fuzzy_value and fuzzy_score >= 0.72:
         return fuzzy_value, round(fuzzy_score, 2), "Pending", "Weak fuzzy country match; review before approval."
 
-    return display_country(raw_country), 0.7, "Pending", "Standardized country text; no approved country alias found."
+    return display, 0.7, "Pending", "Standardized country text; no approved country alias found."
 
 
 def safe_float(value):
