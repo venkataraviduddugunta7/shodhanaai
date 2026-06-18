@@ -1,36 +1,15 @@
 import json
-import os
 import sqlite3
-import threading
 import time
 
 from .config import DB_PATH, ensure_dirs
 
-SQLITE_TIMEOUT_SECONDS = int(os.environ.get("SHODHANA_SQLITE_TIMEOUT_SECONDS", "30"))
-_WAL_LOCK = threading.Lock()
-_WAL_ENABLED = False
-
 
 def connect():
     ensure_dirs()
-    conn = sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT_SECONDS)
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    conn.execute(f"pragma busy_timeout = {SQLITE_TIMEOUT_SECONDS * 1000}")
-    conn.execute("pragma foreign_keys = on")
-    conn.execute("pragma synchronous = normal")
-    _enable_wal(conn)
     return conn
-
-
-def _enable_wal(conn):
-    global _WAL_ENABLED
-    if _WAL_ENABLED:
-        return
-    with _WAL_LOCK:
-        if _WAL_ENABLED:
-            return
-        conn.execute("pragma journal_mode = wal")
-        _WAL_ENABLED = True
 
 
 def init_db():
@@ -102,7 +81,6 @@ def init_db():
                 reason_for_suggestion text,
                 approved_standard_product text,
                 status text not null,
-                is_master integer not null default 0,
                 created_at integer not null
             );
 
@@ -115,7 +93,6 @@ def init_db():
                 source_roles text,
                 approved_standard_company_name text,
                 status text not null,
-                is_master integer not null default 0,
                 created_at integer not null
             );
 
@@ -128,7 +105,6 @@ def init_db():
                 source_roles text,
                 approved_standard_country_name text,
                 status text not null,
-                is_master integer not null default 0,
                 created_at integer not null
             );
 
@@ -148,6 +124,37 @@ def init_db():
                 follow_up_plan text,
                 created_at integer not null
             );
+
+            create table if not exists settings (
+                id integer primary key check (id = 1),
+                chemdoze_email text not null,
+                chemdoze_password text not null,
+                auto_sync_enabled integer not null default 0,
+                auto_sync_interval_hours integer not null default 24,
+                last_sync_timestamp integer,
+                sync_query text not null default 'Duloxetine',
+                sync_from_date text not null default '01/01/2020',
+                sync_to_date text not null default '28/02/2026',
+                sync_status text
+            );
+
+            create table if not exists sent_emails (
+                id integer primary key autoincrement,
+                opportunity_id text not null,
+                recipient_email text not null,
+                subject text not null,
+                body text not null,
+                status text not null,
+                sent_at integer not null
+            );
+            """
+        )
+        conn.execute(
+            """
+            insert or ignore into settings(
+                id, chemdoze_email, chemdoze_password, auto_sync_enabled, auto_sync_interval_hours,
+                sync_query, sync_from_date, sync_to_date, sync_status
+            ) values (1, 'nbd@shodhana.com', 'H56P9EcGNr', 0, 24, 'Duloxetine', '01/01/2020', '28/02/2026', 'Idle')
             """
         )
         ensure_column(conn, "product_mappings", "reason_for_suggestion", "text")
@@ -155,9 +162,6 @@ def init_db():
         ensure_column(conn, "company_mappings", "source_roles", "text")
         ensure_column(conn, "country_mappings", "reason_for_suggestion", "text")
         ensure_column(conn, "country_mappings", "source_roles", "text")
-        ensure_column(conn, "product_mappings", "is_master", "integer not null default 0")
-        ensure_column(conn, "company_mappings", "is_master", "integer not null default 0")
-        ensure_column(conn, "country_mappings", "is_master", "integer not null default 0")
         ensure_column(conn, "generated_pitches", "opportunity_id", "text")
         ensure_column(conn, "generated_pitches", "customer_summary", "text")
         ensure_column(conn, "generated_pitches", "buying_pattern", "text")
@@ -177,9 +181,13 @@ def ensure_column(conn, table, column, definition):
 
 def reset_trade_data(conn):
     conn.execute("delete from generated_pitches")
+    conn.execute("delete from country_mappings")
+    conn.execute("delete from company_mappings")
+    conn.execute("delete from product_mappings")
     conn.execute("delete from clean_trade_records")
     conn.execute("delete from raw_trade_records")
     conn.execute("delete from uploaded_files")
+
 
 
 def insert_upload(conn, original_name, stored_path, source_type, row_count, clean_count, duplicates, quality, column_map):

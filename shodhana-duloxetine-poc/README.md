@@ -1,8 +1,8 @@
-# Shodhana Engine - Duloxetine Trade Intelligence
+# Shodhana AI - Duloxetine Trade Intelligence POC
 
-Sales-ready Duloxetine growth engine for uploading market files, normalizing messy trade data automatically, ranking customer opportunities, and preparing customer pitch material.
+Fresh proof of concept for the first Shodhana AI Grow module.
 
-The engine supports:
+The first demo proves:
 
 1. Upload Duloxetine Excel/CSV market data
 2. Detect columns from Chemdos/APIFDF style files
@@ -10,14 +10,13 @@ The engine supports:
 4. Normalize importer/exporter company names
 5. Convert quantity into KG where possible
 6. Calculate price per KG
-7. Automatically club grouped product, company, and country aliases
-8. Keep optional reusable master mappings for admin refinement
-9. Show opportunities immediately after upload
-10. Show a business dashboard for demand, suppliers, countries, price, and Shodhana/competitor supply
-11. Rank customer opportunities using quantity, recency, supplier, price, country market type, and data quality
-12. Open a customer opportunity detail page with shipment history, supplier history, price analysis, and recommended action
-13. Export cleaned data, opportunity rows, and dashboard summary
-14. Generate AI-assisted customer summary, pitch email, price strategy, and PPT outline
+7. Review and approve/edit/reject product and company mappings
+8. Re-run cleaning from raw records using approved mappings
+9. Show a business dashboard for demand, suppliers, countries, price, and Shodhana/competitor supply
+10. Rank customer opportunities using quantity, recency, supplier, price, country market type, and data quality
+11. Open a customer opportunity detail page with shipment history, supplier history, price analysis, and recommended action
+12. Export cleaned data, opportunity rows, and dashboard summary
+13. Generate AI-assisted customer summary, pitch email, price strategy, and PPT outline
 
 ## Run
 
@@ -33,30 +32,31 @@ http://127.0.0.1:8010
 
 Then click `Import Sample File`, or upload a new `.xlsx`/`.csv`.
 
-## Railway Hosting
+### Chemdoze Import
 
-Railway deployment notes are in:
+The Upload page also has a `Chemdoze Auto Import` panel. Enter the Chemdoze email/password in the UI, keep the default `Duloxetine` date range if appropriate, and click `Download & Process`.
 
-```text
-docs/RAILWAY_DEPLOYMENT.md
+For local runs, credentials can also be provided as environment variables instead of typing them into the page:
+
+```bash
+export CHEMDOZE_EMAIL="your-email"
+export CHEMDOZE_PASSWORD="your-password"
+python3 app.py
 ```
 
-Use these key settings:
+Credentials are not stored by the app.
 
-```text
-Root Directory: /shodhana-duloxetine-poc
-Start Command: python app.py
-Volume Mount Path: /app/persistent-data
-Variable: SHODHANA_DATA_DIR=/app/persistent-data
-```
-
-## Engine Flow
+## Demo Flow
 
 ```text
 Upload Excel
+-> Initial Cleaning
+-> Cleaning Review
+-> Approve/Edit mappings
+-> Re-run Cleaning
+-> Dashboard
 -> Opportunities
 -> Pitch
--> Dashboard
 ```
 
 The browser supports `/cleaning-review` directly:
@@ -65,54 +65,16 @@ The browser supports `/cleaning-review` directly:
 http://127.0.0.1:8010/cleaning-review
 ```
 
-## Optional Admin Review
+## Cleaning Review
 
-The main user flow does not require mapping confirmation. Uploading a trade file processes data and opens opportunities directly.
-
-The `/cleaning-review` page remains as an optional admin layer for refining mappings, saving defaults, or correcting edge cases.
+The Cleaning Review module is the manual-control layer before the final dashboard.
 
 It shows:
 
-- Smart Confirm Mappings: grouped product, company, and country aliases that can be approved once at master level.
-- Product Mapping Review: raw product description, suggested standard product/category, confidence, reason, status, and Approve/Edit/Reject actions.
+- Product Mapping Review: raw product description, suggested standard product, confidence, reason, status, and Approve/Edit/Reject actions.
 - Company Mapping Review: raw importer/exporter name, suggested standard company name, confidence, role, status, and Approve/Edit/Reject actions.
-- Country Mapping Review: raw importer/exporter country name, suggested standard country name, confidence, role, status, and Approve/Edit/Reject actions.
 - Cleaning Summary: raw records, cleaned records, approved mappings, review-required records, valid KG rows, invalid units, price/kg rows, and missing value/quantity rows.
 - Manual review filters: pending mappings, low-confidence rows, review-required products, invalid units, and missing price/kg rows.
-
-### Smart Confirm Groups
-
-Use `Open Smart Confirm` when the user wants a faster top-level review.
-
-The system groups aliases by the suggested master value:
-
-- Product groups: for example multiple raw Duloxetine pellet descriptions under `Duloxetine Pellets`.
-- Company groups: importer/exporter spelling variants under one standard company name.
-- Country groups: country aliases under one standard country.
-
-The reviewer can confirm the whole group, edit the master value, or reject the group. Every alias has a checkbox, including high-confidence aliases. If an alias does not belong in that group, uncheck it before `Confirm Group` or `Save Edited`. The unchecked alias moves into `Remaining / Create New Mapping`, where the reviewer can select one or more aliases, type a new master product/company/country name, and click `Save New Mapping`.
-
-Confirmed groups disappear from the Smart Confirm modal. Only groups that still need a decision remain visible, which keeps the review focused during a client demo. Mapping saves are intentionally fast: `Confirm Group`, `Save Edited`, `Save New Mapping`, and `Approve Confident` update the mapping configuration only. After review is complete, click `Apply Config` once to apply all approved mappings to the full Excel dataset and rebuild dashboard/opportunity results.
-
-Use `Manage Groups` when an approved mapping needs correction later. In Manage mode, confirmed product, company, and country groups are editable:
-
-- Rename the master group value and click `Save Group`.
-- Uncheck aliases that do not belong; they move into `Remaining / Create New Mapping`.
-- Open the Remaining group, select one or more aliases, type an existing master name to add them to that group, or type a new master name to create a new group.
-- Click `Apply Config` once after group management is complete.
-
-Approved mappings stay in the SQLite database. On the next upload, the same raw name or a very strong normalized company match is applied automatically, so the team does not approve the same company/product/country again.
-
-The app separates system suggestions from confirmed configuration:
-
-- System suggestions can be recalculated as the cleaning rules improve.
-- User-confirmed mappings are saved as master configuration.
-- Confirmed mappings are also synced into `data/seed/*.csv` as default mappings, so a fresh DB can load the same knowledge.
-- Product masters can be edited into subcategories such as `Duloxetine Pellets 17%`, `Duloxetine Pellets 22.5%`, or `Duloxetine Pellets 25%`.
-- Company masters club variants like `EVA PHARMA`, `EVA PHARMA FOR PHARMACEUTICALS`, and `EVA PHARMA FOR PHARMACEUTICALSAND MEDICAL APPLIANCES SA`.
-- Future AI/LLM support should suggest difficult mappings, but the approved result should still be stored in these mapping tables.
-
-Use `Save Defaults` to manually rewrite the seed CSV files from the current confirmed master mappings. Approve/Edit/Reject actions also sync defaults automatically.
 
 ### How To Approve Mappings
 
@@ -127,69 +89,21 @@ Then click `Approve` or `Edit`. `Reject` marks the suggestion as rejected and ke
 
 For company rows, edit the suggested standard company name directly in the text field, then click `Approve` or `Edit`.
 
-For country rows, edit the suggested standard country name directly in the text field, then click `Approve` or `Edit`.
+### How To Re-run Cleaning
 
-### How To Apply Config
-
-Approving, editing, rejecting, or removing aliases does not reprocess the full Excel immediately. This keeps group confirmation fast. After the reviewer finishes mapping decisions, click `Apply Config` once.
+After approving or editing mappings, click `Re-run Cleaning`.
 
 The system will:
 
 - Reprocess the raw uploaded records
 - Apply approved product mappings
 - Apply approved importer/exporter company mappings
-- Apply approved importer/exporter country mappings
 - Recalculate KG quantity
 - Recalculate price/kg
-- Rebuild duplicate keys using approved standard product, company, and country values
 - Rebuild dashboard metrics
 - Regenerate opportunity rows
 
 This is the key proof for Shodhana: the sales team can move from messy Excel to controlled, reviewed, sales-ready intelligence without manually rebuilding pivot tables every time.
-
-### Similar Name Clubbing
-
-The cleaning review intentionally separates `suggestion` from `approval`.
-
-When a document is scanned, the system suggests clubbing for:
-
-- Importer names
-- Exporter names
-- Product descriptions and subcategories
-- Importer countries
-- Exporter countries
-
-Examples:
-
-- `Nosch Labs Pvt Ltd` and `Nosch Labs Private Limited` can be approved under one master company.
-- `Republic of Korea` and `South Korea` can be approved under one standard country.
-- `Duloxetine EC Pellets 17%` and other pellet subcategory descriptions can be approved under `Duloxetine Pellets`.
-
-Pending suggestions are not treated as final master data. After the user approves or edits mappings, cleaning runs automatically and clubs the approved standards into one clean view for dashboard, opportunities, and pitch generation.
-
-The opportunity engine groups rows by the approved master importer name. It also shows how many raw company names were clubbed and lists those aliases in the opportunity detail view. Supplier history is grouped by the approved master exporter name with its raw aliases visible.
-
-The Opportunities page is not gated by mapping review. Automatic normalization is applied immediately so sales users can move from Excel to ranked customers and pitch generation without a manual cleanup meeting.
-
-Single trusted values do not create review work. For example, a normal country value like \`Brazil\` is treated as already clean; only new aliases or fuzzy matches such as \`US America\` against an existing \`United States\` master are sent to confirmation.
-
-The approved master data is stored in:
-
-- `product_mappings`
-- `company_mappings`
-- `country_mappings`
-
-These tables are not cleared when a new trade file is uploaded. New files reuse the approved master mappings and only ask for review when a genuinely new or low-confidence alias appears.
-
-On app startup, the seed CSV files are loaded into the mapping tables as approved master defaults. This gives the POC a simple configuration lifecycle:
-
-```text
-Review alias
--> confirm/edit master value
--> save to SQLite mapping table
--> sync to seed CSV defaults
--> future uploads reuse automatically
-```
 
 ## Dashboard And Opportunity Engine
 

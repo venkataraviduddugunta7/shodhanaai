@@ -4,28 +4,16 @@ let opportunityDetailData = null;
 let pitchData = null;
 let activeEmailTone = "formal";
 let reviewData = {summary: {}, products: [], companies: [], issue_rows: []};
-let mappingGroupData = {products: [], companies: [], countries: []};
-let cleanupAgentData = null;
 let reviewFilter = "pending";
-let mappingsNeedRerun = localStorage.getItem("shodhanaMappingsNeedRerun") === "1";
-let activeSmartConfirmKey = "";
-let showConfirmedGroups = false;
-let mappingWriteInFlight = false;
+const expandedCompanyGroups = new Set();
+const expandedCountryGroups = new Set();
+const expandedProductGroups = new Set();
 const STANDARD_PRODUCTS = [
   "Duloxetine API",
-  "Duloxetine Pellets 17%",
-  "Duloxetine Pellets 22.5%",
-  "Duloxetine Pellets 25%",
   "Duloxetine Pellets",
   "Duloxetine Placebo Pellets",
-  "Duloxetine Reference Standard / Impurity",
   "Other / Review Required",
 ];
-const GROUP_KINDS = {
-  products: {kind: "product", label: "Product Groups"},
-  companies: {kind: "company", label: "Company Groups"},
-  countries: {kind: "country", label: "Country Groups"},
-};
 
 async function getJSON(path) {
   const response = await fetch(path);
@@ -61,11 +49,32 @@ async function importSample(button) {
   await withBusy(button, "Importing", async () => {
     setStatus("Importing sample Excel...");
     const result = await postJSON("/api/import-sample", {});
-    markMappingsClean();
     renderImportResult(result);
     await refreshAll();
-    setStatus(`Ready: ${result.clean_rows} rows processed, ${result.duplicates_removed} duplicates removed.`);
-    showPage("opportunities");
+    setStatus(`Initial cleaning complete: ${result.clean_rows} clean rows, ${result.duplicates_removed} duplicates removed. Review mappings next.`);
+    showPage("review");
+  });
+}
+
+async function importChemdoze(button) {
+  const email = document.getElementById("chemdozeEmail").value.trim();
+  const password = document.getElementById("chemdozePassword").value;
+  const query = document.getElementById("chemdozeQuery").value.trim() || "Duloxetine";
+  const fromDate = document.getElementById("chemdozeFromDate").value.trim();
+  const toDate = document.getElementById("chemdozeToDate").value.trim();
+  await withBusy(button, "Downloading", async () => {
+    setStatus("Downloading Chemdoze Excel and rebuilding data...");
+    const result = await postJSON("/api/import-chemdoze", {
+      email,
+      password,
+      query,
+      from_date: fromDate,
+      to_date: toDate,
+    });
+    renderImportResult(result);
+    await refreshAll();
+    setStatus(`Chemdoze import complete: ${result.clean_rows} clean rows, ${result.duplicates_removed} duplicates removed. Review mappings next.`);
+    showPage("review");
   });
 }
 
@@ -83,12 +92,11 @@ async function uploadFile(button) {
     const response = await fetch("/api/upload", {method: "POST", body: form});
     const result = await response.json();
     if (!response.ok || result.error) throw new Error(result.error || "Upload failed.");
-    markMappingsClean();
     renderImportResult(result);
     await refreshAll();
     const count = result.clean_rows || result.rows || 0;
-    setStatus(`Ready: ${count} rows processed from ${file.name}.`);
-    if (sourceType === "trade_data") showPage("opportunities");
+    setStatus(`Processed ${count} rows from ${file.name}.`);
+    if (sourceType === "trade_data") showPage("review");
   });
 }
 
@@ -97,67 +105,6 @@ function renderImportResult(result) {
   document.getElementById("columnMap").textContent = Object.keys(map).length
     ? JSON.stringify(map, null, 2)
     : JSON.stringify(result, null, 2);
-  renderUploadSummary(result);
-}
-
-function renderUploadSummary(result) {
-  const container = document.getElementById("uploadSummary");
-  if (!container) return;
-  const summary = result.intake_summary || {};
-  const readiness = result.mapping_readiness || {};
-  if (!Object.keys(summary).length) {
-    container.classList.add("hidden");
-    container.classList.remove("has-result");
-    container.innerHTML = "";
-    return;
-  }
-  container.classList.remove("hidden");
-  container.classList.add("has-result");
-  const rows = [
-    ["Products", summary.products?.groups],
-    ["Companies", summary.companies?.groups],
-    ["Countries", summary.countries?.groups],
-  ];
-  container.innerHTML = `<div class="upload-summary-head">
-    <span class="eyebrow">Processed</span>
-    <strong>${num(result.clean_rows || result.rows || 0)} clean rows</strong>
-    <em>${num(result.duplicates_removed || 0)} duplicates removed</em>
-  </div>
-  <div class="upload-summary-grid">
-    ${rows.map(([label, groups]) => `<div>
-      <span>${esc(label)}</span>
-      <strong>${num(groups)}</strong>
-      <em>normalized groups</em>
-    </div>`).join("")}
-  </div>
-  <div class="upload-next">Opportunities are ready.</div>`;
-}
-
-function renderProductOptionDatalist() {
-  const datalist = document.getElementById("standardProductOptions");
-  if (!datalist) return;
-  datalist.innerHTML = STANDARD_PRODUCTS.map((option) => `<option value="${esc(option)}"></option>`).join("");
-}
-
-function renderGroupOptionDatalists() {
-  const configs = [
-    ["productGroupOptions", "products"],
-    ["companyGroupOptions", "companies"],
-    ["countryGroupOptions", "countries"],
-  ];
-  configs.forEach(([id, key]) => {
-    const datalist = document.getElementById(id);
-    if (!datalist) return;
-    const values = new Set(key === "products" ? STANDARD_PRODUCTS : []);
-    (mappingGroupData[key] || []).forEach((group) => {
-      const value = String(group.standard_value || "").trim();
-      if (value && !isRemainingMappingGroup(group)) values.add(value);
-    });
-    datalist.innerHTML = Array.from(values)
-      .sort((left, right) => left.localeCompare(right))
-      .map((option) => `<option value="${esc(option)}"></option>`)
-      .join("");
-  });
 }
 
 function dashboardFilters(prefix = "dash") {
@@ -240,480 +187,21 @@ async function loadDashboard() {
 }
 
 async function loadReview() {
-  const [review, groups, agent] = await Promise.all([
-    getJSON("/api/cleaning-review"),
-    getJSON("/api/mapping-groups"),
-    getJSON("/api/cleanup-agent"),
-  ]);
-  reviewData = review;
-  mappingGroupData = groups;
-  cleanupAgentData = agent;
-  renderGroupOptionDatalists();
+  reviewData = await getJSON("/api/cleaning-review");
   renderReviewSummary(reviewData.summary || {});
-  renderCleanupAgent(cleanupAgentData || {});
-  renderSmartConfirm(mappingGroupData);
-  renderProductReview(reviewData.products || []);
-  renderCompanyReview(reviewData.companies || []);
-  renderCountryReview(reviewData.countries || []);
   renderIssueRows(reviewData.issue_rows || []);
-}
-
-function renderCleanupAgent(plan) {
-  const container = document.getElementById("cleanupAgentPanel");
-  if (!container) return;
-  const summary = plan.summary || {};
-  const lanes = plan.lanes || [];
-  const decisionAliases = Number(summary.decision_aliases || 0);
-  const safeAliases = Number(summary.safe_aliases || 0);
-  const readiness = plan.readiness || {};
-  const state = decisionAliases
-    ? "Needs Review"
-    : safeAliases
-      ? "Safe Matches Ready"
-      : readiness.requires_review
-        ? "Review Required"
-        : "Ready";
-  container.innerHTML = `
-    <div class="agent-hero-card">
-      <div class="agent-identity">
-        <div class="agent-glyph"><span></span></div>
-        <div>
-          <span class="eyebrow">AI Cleanup Agent</span>
-          <h3>${esc(state)}</h3>
-          <p>${esc(agentStateCopy(plan))}</p>
-        </div>
-      </div>
-      <div class="agent-kpis">
-        ${agentKpi("Clean rows", summary.cleaned_records)}
-        ${agentKpi("Auto-safe aliases", safeAliases)}
-        ${agentKpi("Human decisions", decisionAliases)}
-        ${agentKpi("Quality flags", summary.quality_issues)}
-      </div>
-      <div class="button-row">
-        <button class="secondary" onclick="runCleanupAutopilot(this)">Auto-clean Safe Matches</button>
-        <button onclick="openSmartConfirmModal('', false)">Review Exceptions</button>
-        <button class="ghost" onclick="applyConfigAndOpen(this, 'opportunities')">Apply & Continue</button>
-      </div>
-    </div>
-    <div class="agent-lanes">
-      ${lanes.map(agentLaneCard).join("")}
-    </div>
-  `;
-}
-
-function agentStateCopy(plan) {
-  const summary = plan.summary || {};
-  if (Number(summary.decision_aliases || 0)) {
-    return `${num(summary.decision_aliases)} aliases need review before opportunities are unlocked.`;
-  }
-  if (Number(summary.safe_aliases || 0)) {
-    return `${num(summary.safe_aliases)} confident aliases can be approved automatically.`;
-  }
-  return "Cleanup is ready. Apply the latest configuration and continue to ranked customers.";
-}
-
-function agentKpi(label, value) {
-  return `<div><span>${esc(label)}</span><strong>${formatValue(value)}</strong></div>`;
-}
-
-function agentLaneCard(lane) {
-  const examples = lane.examples || [];
-  const status = Number(lane.decision_aliases || 0)
-    ? `${num(lane.decision_aliases)} decisions`
-    : Number(lane.safe_aliases || 0)
-      ? `${num(lane.safe_aliases)} safe`
-      : "ready";
-  return `<div class="agent-lane">
-    <div class="agent-lane-head">
-      <span>${esc(lane.label)}</span>
-      <strong>${esc(status)}</strong>
-    </div>
-    <div class="agent-progress">
-      <span style="width:${agentLaneWidth(lane)}%"></span>
-    </div>
-    <div class="agent-lane-metrics">
-      <span>${num(lane.total_groups)} groups</span>
-      <span>${num(lane.confirmed_aliases)} confirmed</span>
-      <span>${num(lane.safe_groups)} auto-safe</span>
-    </div>
-    ${examples.length ? `<div class="agent-examples">
-      ${examples.map((item) => `<button class="ghost small" onclick="openSmartConfirmModal('${esc(lane.key)}', false)" title="${esc((item.samples || []).join(" · "))}">
-        ${esc(item.standard_value || "Review group")}
-      </button>`).join("")}
-    </div>` : `<div class="agent-clear">No visible exceptions</div>`}
-  </div>`;
-}
-
-function agentLaneWidth(lane) {
-  const total = Math.max(1, Number(lane.total_aliases || 0));
-  const done = Number(lane.confirmed_aliases || 0) + Number(lane.safe_aliases || 0);
-  return Math.max(8, Math.min(100, (done / total) * 100));
 }
 
 function renderReviewSummary(summary) {
   const cards = [
     ["Total Raw Records", summary.total_raw_records],
     ["Cleaned Records", summary.cleaned_records],
-    ["Product Mappings Applied", summary.product_mappings_applied],
-    ["Company Mappings Applied", summary.company_mappings_applied],
-    ["Country Mappings Applied", summary.country_mappings_applied],
-    ["Review Required", summary.review_required_records],
-    ["Valid KG Quantity", summary.valid_kg_records],
-    ["Invalid Units", summary.invalid_qty_records],
-    ["Price/KG Calculated", summary.price_records],
-    ["Missing Value/Qty", summary.records_missing_value_or_quantity],
     ["Pending Product Maps", summary.pending_product_mappings],
     ["Pending Company Maps", summary.pending_company_mappings],
     ["Pending Country Maps", summary.pending_country_mappings],
-    ["Duplicates Removed", summary.duplicates_removed],
+    ["Review Required Rows", summary.review_required_records],
   ];
   document.getElementById("reviewSummaryCards").innerHTML = cards.map(statCard).join("");
-}
-
-function renderSmartConfirm(groups) {
-  const container = document.getElementById("smartConfirmCards");
-  if (!container) return;
-  container.innerHTML = Object.entries(GROUP_KINDS).map(([key, meta]) => {
-    const rows = groups[key] || [];
-    const needsConfirm = rows.reduce((sum, group) => sum + groupNeedsConfirm(group), 0);
-    const approved = rows.reduce((sum, group) => sum + Number(group.approved_count || 0), 0);
-    const aliases = rows.reduce((sum, group) => sum + Number(group.alias_count || 0), 0);
-    return `<div class="smart-card">
-      <div>
-        <span>${esc(meta.label)}</span>
-        <strong>${num(rows.length)} groups</strong>
-      </div>
-      <div class="smart-metrics">
-        <span>${num(aliases)} aliases</span>
-        <span>${num(needsConfirm)} need confirmation</span>
-        <span>${num(approved)} approved</span>
-      </div>
-      <div class="smart-card-actions">
-        <button class="small secondary" onclick="openSmartConfirmModal('${key}', false)">Review Pending</button>
-        <button class="small ghost" onclick="openSmartConfirmModal('${key}', true)">Manage Groups</button>
-      </div>
-    </div>`;
-  }).join("");
-}
-
-function openSmartConfirmModal(activeKey = "", manageMode = showConfirmedGroups) {
-  activeSmartConfirmKey = activeKey;
-  showConfirmedGroups = Boolean(manageMode);
-  const modal = document.getElementById("smartConfirmModal");
-  renderSmartConfirmModalBody();
-  modal.classList.remove("hidden");
-}
-
-function closeSmartConfirmModal() {
-  document.getElementById("smartConfirmModal").classList.add("hidden");
-}
-
-function renderSmartConfirmModalBody() {
-  const body = document.getElementById("smartConfirmModalBody");
-  const keys = activeSmartConfirmKey ? [activeSmartConfirmKey] : Object.keys(GROUP_KINDS);
-  const modeLabel = showConfirmedGroups ? "Manage all groups" : "Review pending groups";
-  body.innerHTML = `<div class="smart-toolbar">
-    <div>
-      <span class="eyebrow">${esc(modeLabel)}</span>
-      <p>${showConfirmedGroups
-        ? "Edit confirmed mapping groups, rename the master value, or uncheck aliases to move them into Remaining / Create New Mapping."
-        : "Only groups still needing confirmation are shown. Confirm clean groups, or uncheck wrong aliases to split them."}</p>
-    </div>
-    <div class="button-row">
-      <button class="${showConfirmedGroups ? "secondary" : ""} small" onclick="setSmartConfirmMode(false)">Review Pending</button>
-      <button class="${showConfirmedGroups ? "" : "secondary"} small" onclick="setSmartConfirmMode(true)">Manage Groups</button>
-    </div>
-  </div>
-  ${keys.map((key) => smartConfirmSection(key, mappingGroupData[key] || [])).join("")}`;
-}
-
-function setSmartConfirmMode(manageMode) {
-  showConfirmedGroups = Boolean(manageMode);
-  renderSmartConfirmModalBody();
-}
-
-function smartConfirmSection(key, groups) {
-  const meta = GROUP_KINDS[key];
-  if (!groups.length) {
-    return `<section class="smart-section"><h3>${esc(meta.label)}</h3><div class="empty">No mapping groups yet.</div></section>`;
-  }
-  const ranked = groups
-    .map((group, index) => ({group, index}))
-    .sort((left, right) => {
-      const leftReview = String(left.group.standard_value || "").toLowerCase().includes("review required") ? 1 : 0;
-      const rightReview = String(right.group.standard_value || "").toLowerCase().includes("review required") ? 1 : 0;
-      const leftGeneric = isGenericMappingGroup(left.group) ? 1 : 0;
-      const rightGeneric = isGenericMappingGroup(right.group) ? 1 : 0;
-      return (
-        leftGeneric - rightGeneric
-        || leftReview - rightReview
-        || groupNeedsConfirm(right.group) - groupNeedsConfirm(left.group)
-        || Number(right.group.max_confidence || 0) - Number(left.group.max_confidence || 0)
-        || Number(right.group.alias_count || 0) - Number(left.group.alias_count || 0)
-      );
-    });
-  const visible = ranked.filter((entry) => groupNeedsConfirm(entry.group) > 0).slice(0, 25);
-  const display = showConfirmedGroups ? ranked.slice(0, 80) : visible;
-  const emptyText = showConfirmedGroups
-    ? "No mapping groups for this section."
-    : "No pending mapping groups for this section. Use Manage Groups to edit confirmed groups.";
-  return `<section class="smart-section">
-    <div class="smart-section-head">
-      <h3>${esc(meta.label)}</h3>
-      <span class="pill">${showConfirmedGroups ? "Manage" : "Review"} ${num(display.length)} of ${num(groups.length)} groups</span>
-    </div>
-    <div class="smart-group-list">
-      ${display.length
-        ? display.map((entry) => smartConfirmGroup(key, entry.group, entry.index)).join("")
-        : `<div class="empty">${esc(emptyText)}</div>`}
-    </div>
-  </section>`;
-}
-
-function smartConfirmGroup(key, group, index) {
-  const inputId = `smart-${key}-${index}`;
-  const needsConfirm = groupNeedsConfirm(group);
-  const confidence = `${percent(group.min_confidence)}-${percent(group.max_confidence)}`;
-  const isRemaining = isRemainingMappingGroup(group);
-  const isConfirmedGroup = !isRemaining && needsConfirm === 0;
-  const actions = isRemaining
-    ? `<button class="small" onclick="mappingGroupAction('${key}', ${index}, 'edit')">Save New Mapping</button>
-       <button class="small ghost" onclick="mappingGroupAction('${key}', ${index}, 'reject')">Reject</button>`
-    : isConfirmedGroup
-      ? `<button class="small" onclick="mappingGroupAction('${key}', ${index}, 'edit')">Save Group</button>
-         <button class="small ghost" onclick="mappingGroupAction('${key}', ${index}, 'reject')">Reject</button>`
-    : `<button class="small" onclick="mappingGroupAction('${key}', ${index}, 'approve')">Confirm Group</button>
-       <button class="small secondary" onclick="mappingGroupAction('${key}', ${index}, 'edit')">Save Edited</button>
-       <button class="small ghost" onclick="mappingGroupAction('${key}', ${index}, 'reject')">Reject</button>`;
-  return `<div class="smart-group">
-    <div class="smart-group-main">
-      <span class="eyebrow">${isRemaining ? "Create new mapping" : needsConfirm ? `${num(needsConfirm)} need confirm` : "Current group"}</span>
-      ${smartGroupValueControl(key, inputId, group.standard_value)}
-      <div class="smart-metrics">
-        <span>${num(group.alias_count)} aliases</span>
-        <span>${num(group.master_count || 0)} masters</span>
-        <span>${confidence}</span>
-        ${group.source_roles ? `<span>${esc(group.source_roles)}</span>` : ""}
-      </div>
-      ${aliasChecklist(key, group, index)}
-    </div>
-    <div class="smart-group-actions">
-      ${actions}
-    </div>
-  </div>`;
-}
-
-function aliasChecklist(key, group, index) {
-  const items = Array.isArray(group.items) && group.items.length
-    ? group.items
-    : (group.samples || []).map((sample, sampleIndex) => ({
-        id: group.ids?.[sampleIndex] || 0,
-        raw: sample,
-        suggested: group.standard_value,
-        status: "Pending",
-        confidence: group.max_confidence || 0,
-        is_master: 0,
-      }));
-  if (!items.length) return "";
-  const controlKey = groupControlKey(key, index);
-  const checkedCount = confirmableGroupIds(group).length;
-  const isRemaining = isRemainingMappingGroup(group);
-  const rows = items.map((item) => {
-    const itemId = Number(item.id || 0);
-    const isMaster = Number(item.is_master || 0) === 1;
-    const isRejected = item.status === "Rejected";
-    const checked = !isRejected ? "checked" : "";
-    const disabled = !itemId ? "disabled" : "";
-    const rowClass = [
-      "alias-check-row",
-      isMaster ? "alias-master" : "",
-      isRejected ? "alias-rejected" : "",
-    ].filter(Boolean).join(" ");
-    const statusText = isMaster ? "Master" : isRejected ? "Rejected" : item.status || "Pending";
-    const suggested = item.approved || item.suggested || group.standard_value || "";
-    return `<label class="${rowClass}">
-      <input type="checkbox" data-group="${esc(controlKey)}" value="${itemId}" ${checked} ${disabled}>
-      <span>
-        <strong>${esc(item.raw || "Unknown")}</strong>
-        ${suggested ? `<em>${esc(suggested)}</em>` : ""}
-      </span>
-      <span class="alias-status">${esc(statusText)} · ${percent(item.confidence || 0)}</span>
-    </label>`;
-  }).join("");
-  return `<div class="alias-review">
-    <div class="alias-review-head">
-      <span>${num(checkedCount)} selected for confirmation</span>
-      <span>${isRemaining ? "Select aliases, type the new master name, then Save Edited." : "Uncheck aliases to move them into Remaining / Create New Mapping."}</span>
-    </div>
-    <div class="alias-check-list">${rows}</div>
-  </div>`;
-}
-
-function smartGroupValueControl(key, inputId, value) {
-  if (key === "products") {
-    return `<input class="smart-value" list="productGroupOptions" id="${inputId}" value="${esc(value)}">`;
-  }
-  if (key === "companies") {
-    return `<input class="smart-value" list="companyGroupOptions" id="${inputId}" value="${esc(value)}">`;
-  }
-  return `<input class="smart-value" list="countryGroupOptions" id="${inputId}" value="${esc(value)}">`;
-}
-
-function groupNeedsConfirm(group) {
-  if (group.needs_review_count !== undefined) {
-    return Math.max(0, Number(group.needs_review_count || 0));
-  }
-  return Math.max(
-    0,
-    Number(group.pending_count || 0)
-      + Number(group.approved_count || 0)
-      - Number(group.master_count || 0)
-  );
-}
-
-function groupControlKey(key, index) {
-  return `group-${key}-${index}`;
-}
-
-function confirmableGroupIds(group) {
-  const ids = (group.items || [])
-    .filter((item) => item.status !== "Rejected")
-    .map((item) => Number(item.id || 0))
-    .filter(Boolean);
-  return ids.length ? ids : (group.ids || []);
-}
-
-function selectedGroupIds(key, index, group) {
-  const controls = Array.from(document.querySelectorAll(`input[data-group="${groupControlKey(key, index)}"]`));
-  if (!controls.length) return confirmableGroupIds(group);
-  return controls
-    .filter((control) => control.checked)
-    .map((control) => Number(control.value || 0))
-    .filter(Boolean);
-}
-
-function excludedGroupIds(key, index, group) {
-  const controls = Array.from(document.querySelectorAll(`input[data-group="${groupControlKey(key, index)}"]`));
-  if (!controls.length) return [];
-  const selected = new Set(selectedGroupIds(key, index, group));
-  return (group.ids || [])
-    .map((id) => Number(id || 0))
-    .filter((id) => {
-      const control = controls.find((item) => Number(item.value || 0) === id);
-      return id && control && !control.disabled && !selected.has(id);
-    });
-}
-
-function isGenericMappingGroup(group) {
-  const value = String(group.standard_value || "").toLowerCase();
-  return value.includes("to the order") || value === "unknown" || value === "n/a";
-}
-
-function isRemainingMappingGroup(group) {
-  return String(group.standard_value || "").toLowerCase() === "remaining / create new mapping";
-}
-
-async function mappingGroupAction(key, index, action, silent = false) {
-  if (mappingWriteInFlight) {
-    if (!silent) setStatus("Still saving the previous mapping change. Please wait a moment.");
-    return;
-  }
-  const group = (mappingGroupData[key] || [])[index];
-  if (!group) return;
-  const input = document.getElementById(`smart-${key}-${index}`);
-  const value = input ? input.value.trim() : group.standard_value;
-  const ids = selectedGroupIds(key, index, group);
-  if (!ids.length) {
-    setStatus("Select at least one alias before saving this group.", true);
-    return;
-  }
-  mappingWriteInFlight = true;
-  setMappingButtonsDisabled(true);
-  try {
-    const wasOpen = !document.getElementById("smartConfirmModal").classList.contains("hidden");
-    const result = await postJSON("/api/mapping-group-action", {
-      kind: GROUP_KINDS[key].kind,
-      ids,
-      excluded_ids: action === "reject" ? [] : excludedGroupIds(key, index, group),
-      action,
-      value,
-    });
-    markMappingsDirty();
-    await Promise.all([loadReview(), loadMappings(), loadOpportunities()]);
-    if (wasOpen) openSmartConfirmModal(key);
-    if (!silent) {
-      const removed = result.excluded ? `, ${result.excluded} moved to Remaining / Create New Mapping` : "";
-      setStatus(`${result.updated} ${GROUP_KINDS[key].kind} mappings saved as ${result.approved || "rejected"}${removed}. Keep reviewing, then click Re-run Cleaning once when mappings are ready.`);
-    }
-  } catch (error) {
-    setStatus(error.message || String(error), true);
-  } finally {
-    mappingWriteInFlight = false;
-    setMappingButtonsDisabled(false);
-  }
-}
-
-async function approveConfidentGroups(button) {
-  await withBusy(button, "Approving", async () => {
-    if (mappingWriteInFlight) {
-      setStatus("Still saving the previous mapping change. Please wait a moment.", true);
-      return;
-    }
-    mappingWriteInFlight = true;
-    setMappingButtonsDisabled(true);
-    let updated = 0;
-    try {
-      for (const key of Object.keys(GROUP_KINDS)) {
-        const groups = mappingGroupData[key] || [];
-        for (let index = 0; index < groups.length; index += 1) {
-          const group = groups[index];
-          const needsConfirm = groupNeedsConfirm(group);
-          const minConfidence = Number(group.min_confidence || 0);
-          const reviewRequired = String(group.standard_value || "").toLowerCase().includes("review required");
-          if (needsConfirm && minConfidence >= 0.9 && !reviewRequired && !isGenericMappingGroup(group)) {
-            const ids = confirmableGroupIds(group);
-            await postJSON("/api/mapping-group-action", {
-              kind: GROUP_KINDS[key].kind,
-              ids,
-              action: "approve",
-              value: group.standard_value,
-            });
-            updated += ids.length;
-          }
-        }
-      }
-      if (updated) {
-        markMappingsDirty();
-        await Promise.all([loadReview(), loadMappings(), loadOpportunities()]);
-        setStatus(`Auto-cleaned ${updated} confident aliases. Apply cleanup when ready.`);
-      } else {
-        await loadReview();
-        await loadMappings();
-        setStatus("No confident pending groups found.");
-      }
-    } finally {
-      mappingWriteInFlight = false;
-      setMappingButtonsDisabled(false);
-    }
-  });
-}
-
-async function runCleanupAutopilot(button) {
-  await approveConfidentGroups(button);
-}
-
-async function syncMasterMappings(button) {
-  await withBusy(button, "Saving", async () => {
-    const result = await postJSON("/api/sync-master-mappings", {});
-    const parts = [
-      `Products ${num(result.products?.rows || 0)}`,
-      `Companies ${num(result.companies?.rows || 0)}`,
-      `Countries ${num(result.countries?.rows || 0)}`,
-    ];
-    setStatus(`Saved confirmed mappings as defaults: ${parts.join(", ")}.`);
-    await loadMappings();
-    await loadReview();
-  });
 }
 
 function renderDashboardCards(stats) {
@@ -885,58 +373,6 @@ async function loadOpportunities() {
   renderOpportunities(opportunityRows);
 }
 
-function markMappingsDirty() {
-  mappingsNeedRerun = true;
-  localStorage.setItem("shodhanaMappingsNeedRerun", "1");
-}
-
-function markMappingsClean() {
-  mappingsNeedRerun = false;
-  localStorage.removeItem("shodhanaMappingsNeedRerun");
-}
-
-function renderOpportunityRerunGate() {
-  const container = document.getElementById("opportunityTable");
-  container.innerHTML = `<div class="review-gate">
-    <div>
-      <span class="eyebrow">Processing Required</span>
-      <h3>Refresh opportunities</h3>
-      <p>Run the processing step again to rebuild the latest customer ranking.</p>
-    </div>
-    <div class="button-row">
-      <button class="secondary" onclick="rerunCleaning(this, 'opportunities')">Refresh</button>
-    </div>
-  </div>`;
-}
-
-function renderOpportunityReviewGate(readiness) {
-  const container = document.getElementById("opportunityTable");
-  const samples = readiness.samples || [];
-  const counts = readiness.by_kind || {};
-  container.innerHTML = `<div class="review-gate">
-    <div>
-      <span class="eyebrow">Data Notes</span>
-      <h3>Opportunities are available</h3>
-      <p>${num(readiness.total_aliases || 0)} aliases can be refined later. Rankings are shown now using automatic normalization.</p>
-    </div>
-    <div class="smart-metrics">
-      <span>Products ${num(counts.products?.groups || 0)}</span>
-      <span>Companies ${num(counts.companies?.groups || 0)}</span>
-      <span>Countries ${num(counts.countries?.groups || 0)}</span>
-    </div>
-    <div class="review-gate-list">
-      ${samples.slice(0, 6).map((group) => `<div>
-        <strong>${esc(group.standard_value)}</strong>
-        <span>${esc(group.kind)} · ${num(group.needs_review)} aliases need confirmation</span>
-        <em>${esc((group.examples || []).join(" · "))}</em>
-      </div>`).join("")}
-    </div>
-    <div class="button-row">
-      <button onclick="showPage('opportunities')">View Opportunities</button>
-    </div>
-  </div>`;
-}
-
 function renderOpportunities(rows) {
   const container = document.getElementById("opportunityTable");
   if (!rows.length) {
@@ -957,6 +393,7 @@ function renderOpportunities(rows) {
         <th>Price Diff</th>
         <th>Shipments</th>
         <th>Last Shipment</th>
+        <th>Buyer Status</th>
         <th>Status</th>
         <th>Score</th>
         <th>Category</th>
@@ -965,22 +402,22 @@ function renderOpportunities(rows) {
       </tr>
     </thead>
     <tbody>
-      ${rows.map((row, index) => `<tr>
+      ${rows.map((row) => {
+        const canPitch = true;
+        const pitchTooltip = "Generate a customer-specific pitch package for this opportunity.";
+        return `<tr>
         <td class="score">#${row.rank}</td>
-        <td>
-          <strong>${esc(row.importer)}</strong>
-          ${mappingAliasNote(row.importer_aliases, "raw company names clubbed")}
-          <br><span class="muted">${esc((row.reasons || []).join(', '))}</span>
-        </td>
+        <td><strong>${esc(row.importer)}</strong><br><span class="muted">${esc((row.reasons || []).join(', '))}</span></td>
         <td>${esc(row.country)}<br><span class="muted">${esc(row.market_category)}</span></td>
         <td>${esc(row.product)}</td>
-        <td>${esc(row.current_supplier)}${mappingAliasNote(row.supplier_aliases, "raw supplier names represented")}</td>
+        <td>${esc(row.current_supplier)}</td>
         <td>${num(row.total_quantity_kg)}</td>
         <td class="score">${money(row.avg_price_per_kg)}</td>
         <td>${money(row.market_avg_price_per_kg)}</td>
         <td class="${Number(row.price_difference || 0) > 0 ? 'score' : 'muted'}">${money(row.price_difference)}</td>
         <td>${num(row.shipment_count)}</td>
         <td>${esc(row.last_shipment_date)}</td>
+        <td>${statusText(row.customer_identification_status)}${Number(row.manual_review_rows || 0) ? `<br><span class="warning-text">${num(row.manual_review_rows)} review rows</span>` : ""}</td>
         <td>${esc(row.shodhana_status)}<br><span class="muted">${esc(row.tier)}</span></td>
         <td class="score">${row.score}</td>
         <td>${esc(row.opportunity_category)}</td>
@@ -988,19 +425,14 @@ function renderOpportunities(rows) {
         <td class="action-cell">
           <div class="action-grid two-actions">
             <button class="small tip" data-tooltip="Open customer, shipment, supplier, and price detail." onclick="viewOpportunity('${esc(row.opportunity_id)}')">Details</button>
-            <button class="small tip" data-tooltip="Generate a customer-specific pitch package for this opportunity." onclick="openPitch('${esc(row.opportunity_id)}')">Generate Pitch</button>
+            <button class="small tip" data-tooltip="${esc(pitchTooltip)}" ${canPitch ? `onclick="openPitch('${esc(row.opportunity_id)}')"` : "disabled"}>${canPitch ? "Generate Pitch" : "Pitch Locked"}</button>
           </div>
         </td>
-      </tr>`).join("")}
+      </tr>`;
+      }).join("")}
     </tbody>
   </table>`;
   setTooltipTitles();
-}
-
-function mappingAliasNote(aliases, label) {
-  const values = Array.isArray(aliases) ? aliases.filter(Boolean) : [];
-  if (values.length <= 1) return "";
-  return `<br><span class="mapping-alias-note tip" data-tooltip="${esc(values.join(" · "))}">${num(values.length)} ${esc(label)}</span>`;
 }
 
 async function aiAction(action, index) {
@@ -1104,8 +536,15 @@ function renderPitch(data) {
       <div class="panel-head"><h3>Follow-up Plan</h3></div>
       ${renderFollowUpPlan(pitch.follow_up_plan || "")}
     </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h3><span class="material-symbols-outlined" style="vertical-align: middle; margin-right: 8px;">history</span> Outreach Communication History</h3>
+      </div>
+      <div id="sentEmailsLogs">Loading communications...</div>
+    </div>
   `;
   setTooltipTitles();
+  loadSentEmailsList();
 }
 
 function pitchSection(title, body) {
@@ -1257,6 +696,8 @@ function renderOpportunityDetail(data) {
         ["Avg Price/KG", money(opp.avg_price_per_kg)],
         ["Market Avg", money(opp.market_avg_price_per_kg)],
         ["Price Difference", money(opp.price_difference)],
+        ["Buyer Status", opp.customer_identification_status || ""],
+        ["Review Rows", opp.manual_review_rows || 0],
       ].map(statCard).join("")}
     </div>
     <div class="grid two">
@@ -1267,9 +708,8 @@ function renderOpportunityDetail(data) {
           <tr><th>Market</th><td>${esc(data.customer_summary?.market_category)}</td></tr>
           <tr><th>Shipments</th><td>${num(data.customer_summary?.shipment_count)}</td></tr>
           <tr><th>Last Shipment</th><td>${esc(data.customer_summary?.last_shipment_date)}</td></tr>
+          <tr><th>Buyer Status</th><td>${statusText(opp.customer_identification_status)}</td></tr>
           <tr><th>Status</th><td>${esc(opp.shodhana_status)}</td></tr>
-          <tr><th>Raw Names Clubbed</th><td>${mappingAliasList(data.customer_summary?.importer_aliases)}</td></tr>
-          <tr><th>Supplier Aliases</th><td>${mappingAliasList(data.customer_summary?.supplier_aliases)}</td></tr>
         </tbody></table>
       </div>
       <div class="panel">
@@ -1298,22 +738,15 @@ function renderOpportunityDetail(data) {
       <div class="panel-head"><h3>Shipment History</h3></div>
       ${shipmentHistoryTable(data.shipment_history || [])}
     </div>`;
-  setTooltipTitles();
 }
 
 function supplierHistoryTable(rows) {
   return rows.length ? `<div class="table-wrap"><table>
     <thead><tr><th>Supplier</th><th>Country</th><th>Qty KG</th><th>Value</th><th>Avg $/KG</th><th>Shipments</th><th>Last Shipment</th><th>Status</th></tr></thead>
     <tbody>${rows.map((row) => `<tr>
-      <td><strong>${esc(row.supplier)}</strong>${mappingAliasNote(row.supplier_aliases, "raw supplier names clubbed")}</td><td>${esc(row.exporter_country)}</td><td>${num(row.total_quantity_kg)}</td><td>${money(row.total_value_usd)}</td><td class="score">${money(row.avg_price_per_kg)}</td><td>${num(row.shipment_count)}</td><td>${esc(row.last_shipment_date)}</td><td>${esc(row.shodhana_status)}</td>
+      <td><strong>${esc(row.supplier)}</strong></td><td>${esc(row.exporter_country)}</td><td>${num(row.total_quantity_kg)}</td><td>${money(row.total_value_usd)}</td><td class="score">${money(row.avg_price_per_kg)}</td><td>${num(row.shipment_count)}</td><td>${esc(row.last_shipment_date)}</td><td>${esc(row.shodhana_status)}</td>
     </tr>`).join("")}</tbody>
   </table></div>` : `<div class="empty">No supplier history.</div>`;
-}
-
-function mappingAliasList(aliases) {
-  const values = Array.isArray(aliases) ? aliases.filter(Boolean) : [];
-  if (!values.length) return `<span class="muted">No aliases</span>`;
-  return `<div class="mapping-alias-list">${values.map((value) => `<span>${esc(value)}</span>`).join("")}</div>`;
 }
 
 function shipmentHistoryTable(rows) {
@@ -1327,7 +760,8 @@ function shipmentHistoryTable(rows) {
 
 async function generatePitchForDetail() {
   if (!opportunityDetailData?.opportunity) return;
-  await openPitch(opportunityDetailData.opportunity.opportunity_id);
+  const opp = opportunityDetailData.opportunity;
+  await openPitch(opp.opportunity_id);
 }
 
 function downloadExport(kind, source = "dashboard") {
@@ -1434,20 +868,18 @@ function renderCompanyReview(rows) {
     <thead>
       <tr>
         <th>Raw Company Name</th>
-        <th>Suggested Standard Company Name</th>
+        <th>Suggested Standard Company</th>
         <th>Confidence</th>
         <th>Role</th>
-        <th>Reason</th>
         <th>Status</th>
         <th>Actions</th>
       </tr>
     </thead>
     <tbody>${rows.map((row) => `<tr>
       <td><strong>${esc(row.raw_company_name)}</strong></td>
-      <td><input class="inline-edit" id="company-map-${row.id}" value="${esc(row.approved_standard_company_name || row.suggested_standard_company_name)}"></td>
+      <td><input class="inline-edit" id="company-map-${row.id}" value="${esc(row.approved_standard_company_name || row.suggested_standard_company_name)}" style="font-weight:bold;"></td>
       <td class="${confidenceClass(row.confidence_score)}">${percent(row.confidence_score)}</td>
       <td>${esc(row.source_roles || "")}</td>
-      <td class="reason-cell">${esc(row.reason_for_suggestion || "")}</td>
       <td>${statusText(row.status)}</td>
       <td class="action-cell"><div class="mapping-actions">
         <button class="small" onclick="mappingAction('company', ${row.id}, 'approve')">Approve</button>
@@ -1458,142 +890,999 @@ function renderCompanyReview(rows) {
   </table>`;
 }
 
-function renderCountryReview(rows) {
-  const container = document.getElementById("countryReviewTable");
-  document.getElementById("countryReviewCount").textContent = `${rows.length} rows`;
-  if (!rows.length) {
-    container.innerHTML = `<div class="empty">Upload trade data to create country mapping suggestions.</div>`;
-    return;
+function toggleGroupExpand(index, groupName) {
+  const body = document.getElementById(`company-group-body-${index}`);
+  const icon = document.getElementById(`expand-icon-${index}`);
+  if (body && icon) {
+    const isHidden = body.classList.toggle("hidden");
+    icon.classList.toggle("expanded", !isHidden);
+    if (!isHidden) {
+      expandedCompanyGroups.add(groupName);
+    } else {
+      expandedCompanyGroups.delete(groupName);
+    }
   }
-  container.innerHTML = `<table>
-    <thead>
-      <tr>
-        <th>Raw Country Name</th>
-        <th>Suggested Standard Country Name</th>
-        <th>Confidence</th>
-        <th>Role</th>
-        <th>Reason</th>
-        <th>Status</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody>${rows.map((row) => `<tr>
-      <td><strong>${esc(row.raw_country_name)}</strong></td>
-      <td><input class="inline-edit" id="country-map-${row.id}" value="${esc(row.approved_standard_country_name || row.suggested_standard_country_name)}"></td>
-      <td class="${confidenceClass(row.confidence_score)}">${percent(row.confidence_score)}</td>
-      <td>${esc(row.source_roles || "")}</td>
-      <td class="reason-cell">${esc(row.reason_for_suggestion || "")}</td>
-      <td>${statusText(row.status)}</td>
-      <td class="action-cell"><div class="mapping-actions">
-        <button class="small" onclick="mappingAction('country', ${row.id}, 'approve')">Approve</button>
-        <button class="small secondary" onclick="mappingAction('country', ${row.id}, 'edit')">Edit</button>
-        <button class="small ghost" onclick="mappingAction('country', ${row.id}, 'reject')">Reject</button>
-      </div></td>
-    </tr>`).join("")}</tbody>
-  </table>`;
 }
 
+async function removeRawMapping(button, id) {
+  await withBusy(button, "Removing...", async () => {
+    try {
+      await postJSON("/api/mapping-action", {
+        kind: "company",
+        id: id,
+        action: "reject",
+        value: ""
+      });
+      showToast("Removed variation from group. Re-running cleaning is recommended to update golden data.");
+      await loadReview();
+      await loadMappings();
+    } catch (err) {
+      showToast("Failed to remove variation: " + err.message, true);
+    }
+  });
+}
+
+async function assignUnassignedVariation(button, id) {
+  const finalVal = document.getElementById(`unassigned-target-${id}`).value.trim();
+  
+  if (!finalVal) {
+    showToast("Please select an existing group or type a new standard name.", true);
+    return;
+  }
+  
+  await withBusy(button, "Assigning...", async () => {
+    try {
+      await postJSON("/api/mapping-action", {
+        kind: "company",
+        id: id,
+        action: "approve",
+        value: finalVal
+      });
+      showToast(`Assigned variation to standard name "${finalVal}". Re-run cleaning to update golden data.`);
+      await loadReview();
+      await loadMappings();
+    } catch (err) {
+      showToast("Failed to assign variation: " + err.message, true);
+    }
+  });
+}
+
+function filterCompanyRegistry() {
+  const searchInput = document.getElementById("companyRegistrySearch");
+  if (!searchInput) return;
+  const query = searchInput.value.toLowerCase().trim();
+  const cards = document.querySelectorAll(".company-accordion-list .company-group-card");
+  
+  cards.forEach((card) => {
+    const input = card.querySelector(".group-name-input");
+    const name = input ? input.value.toLowerCase() : "";
+    
+    const rawItems = card.querySelectorAll(".raw-variation-item strong");
+    let rawMatch = false;
+    rawItems.forEach((item) => {
+      if (item.textContent.toLowerCase().includes(query)) {
+        rawMatch = true;
+      }
+    });
+
+    if (name.includes(query) || rawMatch || card.id === "company-group-card-unassigned") {
+      card.classList.remove("hidden");
+    } else {
+      card.classList.add("hidden");
+    }
+  });
+}
+
+function toggleSelectDropdown(id) {
+  const dropdown = document.getElementById(`unassigned-options-${id}`);
+  if (dropdown) {
+    const isHidden = dropdown.classList.toggle("hidden");
+    if (!isHidden) {
+      document.querySelectorAll(".custom-select-options").forEach((el) => {
+        if (el.id !== `unassigned-options-${id}`) el.classList.add("hidden");
+      });
+    }
+  }
+}
+
+function filterSelectOptions(id) {
+  const query = document.getElementById(`unassigned-target-${id}`).value.toLowerCase().trim();
+  const dropdown = document.getElementById(`unassigned-options-${id}`);
+  if (dropdown) {
+    dropdown.classList.remove("hidden");
+    const options = dropdown.querySelectorAll(".custom-select-option");
+    options.forEach((opt) => {
+      if (opt.textContent.toLowerCase().includes(query)) {
+        opt.classList.remove("hidden");
+      } else {
+        opt.classList.add("hidden");
+      }
+    });
+  }
+}
+
+function selectDropdownOption(id, value) {
+  const input = document.getElementById(`unassigned-target-${id}`);
+  const dropdown = document.getElementById(`unassigned-options-${id}`);
+  if (input) {
+    input.value = value;
+  }
+  if (dropdown) {
+    dropdown.classList.add("hidden");
+  }
+}
+
+function selectDropdownOptionAndFocus(id) {
+  const input = document.getElementById(`unassigned-target-${id}`);
+  const dropdown = document.getElementById(`unassigned-options-${id}`);
+  if (input) {
+    input.value = "";
+    input.focus();
+  }
+  if (dropdown) {
+    dropdown.classList.add("hidden");
+  }
+}
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".custom-select-wrapper")) {
+    document.querySelectorAll(".custom-select-options").forEach((el) => el.classList.add("hidden"));
+  }
+});
+
+
 function productSelect(id, value) {
-  return `<input class="inline-edit" list="standardProductOptions" id="product-map-${id}" value="${esc(value)}">`;
+  return `<select class="inline-edit" id="product-map-${id}">
+    ${STANDARD_PRODUCTS.map((option) => `<option value="${esc(option)}" ${option === value ? "selected" : ""}>${esc(option)}</option>`).join("")}
+  </select>`;
 }
 
 async function mappingAction(kind, id, action) {
-  if (mappingWriteInFlight) {
-    setStatus("Still saving the previous mapping change. Please wait a moment.", true);
-    return;
-  }
   const valueEl = document.getElementById(`${kind}-map-${id}`);
   const value = valueEl ? valueEl.value.trim() : "";
-  mappingWriteInFlight = true;
-  setMappingButtonsDisabled(true);
-  try {
-    const result = await postJSON("/api/mapping-action", {kind, id, action, value});
-    markMappingsDirty();
-    setStatus(`${result.kind} mapping ${result.status.toLowerCase()}. Apply cleanup when review is finished.`);
-    await Promise.all([loadReview(), loadMappings(), loadOpportunities()]);
-  } catch (error) {
-    setStatus(error.message || String(error), true);
-  } finally {
-    mappingWriteInFlight = false;
-    setMappingButtonsDisabled(false);
+  const result = await postJSON("/api/mapping-action", {kind, id, action, value});
+  setStatus(`${result.kind} mapping ${result.status.toLowerCase()}. Click Re-run Cleaning to rebuild golden data.`);
+  await loadReview();
+  await loadMappings();
+}
+
+async function bulkApproveMappings(kind, minConfidence, button) {
+  await withBusy(button, "Approving", async () => {
+    const threshold = Number(minConfidence || 0.9);
+    const result = await postJSON("/api/mapping-bulk-action", {kind, min_confidence: threshold});
+    setStatus(`${result.approved_count} ${kind} mappings approved at ${Math.round(threshold * 100)}%+ confidence. Click Re-run Cleaning to rebuild golden data.`);
+    await loadReview();
+    await loadMappings();
+  });
+}
+
+async function rerunCleaning(button) {
+  await withBusy(button, "Re-running", async () => {
+    const result = await postJSON("/api/rerun-cleaning", {});
+    setStatus(`Cleaning re-run complete: ${result.clean_rows} rows regenerated, ${result.duplicates_removed} duplicates removed.`);
+    await refreshAll();
+    showPage("dashboard");
+  });
+}
+
+function toggleProductGroupExpand(index, groupName) {
+  const body = document.getElementById(`product-group-body-${index}`);
+  const icon = document.getElementById(`product-expand-icon-${index}`);
+  if (body && icon) {
+    const isHidden = body.classList.toggle("hidden");
+    icon.classList.toggle("expanded", !isHidden);
+    if (!isHidden) {
+      expandedProductGroups.add(groupName);
+    } else {
+      expandedProductGroups.delete(groupName);
+    }
   }
 }
 
-function setMappingButtonsDisabled(disabled) {
-  document.querySelectorAll(".smart-group-actions button, .mapping-actions button").forEach((button) => {
-    button.disabled = Boolean(disabled);
+async function removeProductRawMapping(button, id) {
+  await withBusy(button, "Removing...", async () => {
+    try {
+      await postJSON("/api/mapping-action", {
+        kind: "product",
+        id: id,
+        action: "reject",
+        value: ""
+      });
+      showToast("Removed variation from group. Re-running cleaning is recommended to update golden data.");
+      await loadReview();
+      await loadMappings();
+    } catch (err) {
+      showToast("Failed to remove variation: " + err.message, true);
+    }
   });
 }
 
-async function rerunCleaning(button, nextPage = "dashboard") {
-  await withBusy(button, "Applying", async () => {
-    const result = await postJSON("/api/rerun-cleaning", {});
-    markMappingsClean();
-    setStatus(`Configuration applied: ${result.clean_rows} rows regenerated, ${result.duplicates_removed} duplicates removed.`);
-    await refreshAll();
-    showPage(nextPage);
+async function assignUnassignedProductVariation(button, id) {
+  const finalVal = document.getElementById(`unassigned-product-target-${id}`).value.trim();
+  
+  if (!finalVal) {
+    showToast("Please select a standard product.", true);
+    return;
+  }
+  
+  await withBusy(button, "Assigning...", async () => {
+    try {
+      await postJSON("/api/mapping-action", {
+        kind: "product",
+        id: id,
+        action: "approve",
+        value: finalVal
+      });
+      showToast(`Assigned variation to standard name "${finalVal}". Re-run cleaning to update golden data.`);
+      await loadReview();
+      await loadMappings();
+    } catch (err) {
+      showToast("Failed to assign variation: " + err.message, true);
+    }
   });
 }
 
-async function applyConfigAndOpen(button, page) {
-  await rerunCleaning(button, page || "opportunities");
+function filterProductRegistry() {
+  const searchInput = document.getElementById("productRegistrySearch");
+  if (!searchInput) return;
+  const query = searchInput.value.toLowerCase().trim();
+  const cards = document.querySelectorAll("#productMappings .company-group-card");
+  
+  cards.forEach((card) => {
+    const input = card.querySelector(".group-name-input");
+    const name = input ? input.value.toLowerCase() : "";
+    
+    const rawItems = card.querySelectorAll(".raw-variation-item strong");
+    let rawMatch = false;
+    rawItems.forEach((item) => {
+      if (item.textContent.toLowerCase().includes(query)) {
+        rawMatch = true;
+      }
+    });
+
+    if (name.includes(query) || rawMatch || card.id === "product-group-card-unassigned") {
+      card.classList.remove("hidden");
+    } else {
+      card.classList.add("hidden");
+    }
+  });
 }
 
-function scrollToMappingTables() {
-  const details = document.getElementById("advancedConfig");
-  if (details) details.open = true;
-  const target = document.getElementById("productReviewTable");
-  if (target) target.scrollIntoView({behavior: "smooth", block: "start"});
+function toggleProductSelectDropdown(id) {
+  const dropdown = document.getElementById(`unassigned-product-options-${id}`);
+  if (dropdown) {
+    const isHidden = dropdown.classList.toggle("hidden");
+    if (!isHidden) {
+      document.querySelectorAll(".custom-select-options").forEach((el) => {
+        if (el.id !== `unassigned-product-options-${id}`) el.classList.add("hidden");
+      });
+    }
+  }
+}
+
+function filterProductSelectOptions(id) {
+  const query = document.getElementById(`unassigned-product-target-${id}`).value.toLowerCase().trim();
+  const dropdown = document.getElementById(`unassigned-product-options-${id}`);
+  if (dropdown) {
+    dropdown.classList.remove("hidden");
+    const options = dropdown.querySelectorAll(".custom-select-option");
+    options.forEach((opt) => {
+      if (opt.textContent.toLowerCase().includes(query)) {
+        opt.classList.remove("hidden");
+      } else {
+        opt.classList.add("hidden");
+      }
+    });
+  }
+}
+
+function selectProductDropdownOption(id, value) {
+  const input = document.getElementById(`unassigned-product-target-${id}`);
+  const dropdown = document.getElementById(`unassigned-product-options-${id}`);
+  if (input) {
+    input.value = value;
+  }
+  if (dropdown) {
+    dropdown.classList.add("hidden");
+  }
 }
 
 function renderProductMappings(rows) {
-  const html = rows.length ? `<table>
-    <thead><tr><th>Raw Product Description</th><th>Suggested Standard Product</th><th>Confidence</th><th>Reason</th><th>Approved</th><th>Master</th><th>Status</th></tr></thead>
+  const container = document.getElementById("productMappings");
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty">Import data to create product mapping rows.</div>`;
+    return;
+  }
+
+  const groups = {};
+  const unassignedRecords = [];
+
+  rows.forEach((row) => {
+    if (row.status === "Rejected" || (!row.approved_standard_product && !row.suggested_standard_product)) {
+      unassignedRecords.push(row);
+      return;
+    }
+
+    const std = row.approved_standard_product || row.suggested_standard_product || "Other / Review Required";
+    if (!groups[std]) {
+      groups[std] = {
+        name: std,
+        ids: [],
+        raw_descriptions: [],
+        records: [],
+        avg_confidence: 0,
+        reasons: new Set(),
+        statuses: new Set(),
+      };
+    }
+    const g = groups[std];
+    g.ids.push(row.id);
+    g.raw_descriptions.push(row.raw_product_description);
+    g.records.push(row);
+    g.avg_confidence += row.confidence_score;
+    if (row.reason_for_suggestion) g.reasons.add(row.reason_for_suggestion);
+    g.statuses.add(row.status);
+  });
+
+  const groupList = Object.values(groups).map((g) => {
+    g.avg_confidence = g.avg_confidence / g.ids.length;
+    g.reasons = Array.from(g.reasons).join("; ");
+    if (g.statuses.has("Pending")) g.status = "Pending";
+    else if (g.statuses.has("Rejected")) g.status = "Rejected";
+    else g.status = "Approved";
+    return g;
+  });
+
+  groupList.sort((a, b) => {
+    const aPending = a.status === "Pending" ? 1 : 0;
+    const bPending = b.status === "Pending" ? 1 : 0;
+    if (aPending !== bPending) {
+      return bPending - aPending;
+    }
+    return b.avg_confidence - a.avg_confidence;
+  });
+
+  const existingStandardNames = STANDARD_PRODUCTS;
+
+  let unassignedHtml = "";
+  if (unassignedRecords.length > 0) {
+    unassignedRecords.sort((a, b) => a.raw_product_description.localeCompare(b.raw_product_description));
+    const isExpanded = expandedProductGroups.has("UNASSIGNED_CARD");
+    const bodyClass = isExpanded ? "" : "hidden";
+    const iconClass = isExpanded ? "expanded" : "";
+    
+    unassignedHtml = `
+    <div class="company-group-card" id="product-group-card-unassigned" style="border-color: var(--md-sys-color-error); background: rgba(211, 47, 47, 0.01);">
+      <div class="company-group-header" onclick="toggleProductGroupExpand('unassigned', 'UNASSIGNED_CARD')" style="background: rgba(211, 47, 47, 0.03);">
+        <div class="header-left">
+          <span class="material-symbols-outlined expand-icon ${iconClass}" id="product-expand-icon-unassigned" style="color:var(--md-sys-color-error);">keyboard_arrow_right</span>
+          <strong style="color:var(--md-sys-color-error); font-weight: 600;">⚠️ Unallocated / Rejected Variations</strong>
+          <span class="pill error" style="background: var(--md-sys-color-error); color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 4px;">${unassignedRecords.length} variations</span>
+        </div>
+        <div class="header-right" onclick="event.stopPropagation();">
+          <span class="badge rejected">Needs Action</span>
+        </div>
+      </div>
+      <div class="company-group-body ${bodyClass}" id="product-group-body-unassigned">
+        <div class="raw-variations-list">
+          ${unassignedRecords.map((rec) => {
+            const targetId = `unassigned-product-target-${rec.id}`;
+            const dropdownId = `unassigned-product-options-${rec.id}`;
+            return `
+            <div class="raw-variation-item" style="padding: 12px 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+              <div class="raw-name-text" style="flex: 1; min-width: 200px;">
+                <span class="material-symbols-outlined muted" style="font-size:16px;">help_outline</span>
+                <strong>${esc(rec.raw_product_description)}</strong>
+                <span class="pill confidence-pill ${confidenceClass(rec.confidence_score)}">${percent(rec.confidence_score)}</span>
+              </div>
+              <div class="raw-action" style="display: flex; gap: 8px; align-items: center; flex: 2; min-width: 300px; max-width: 600px;">
+                
+                <div class="custom-select-wrapper" style="position: relative; width: 100%; max-width: 450px;">
+                  <input type="text" class="inline-edit custom-select-input" id="${targetId}" 
+                         placeholder="Select standard product..." 
+                         onclick="event.stopPropagation(); toggleProductSelectDropdown(${rec.id})" 
+                         oninput="filterProductSelectOptions(${rec.id})" 
+                         style="width: 100%; padding: 8px; border: 1px solid var(--md-sys-color-outline); border-radius: 4px; box-sizing: border-box; background: #fff; font-weight: 500;">
+                  <span class="material-symbols-outlined" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--md-sys-color-on-surface-variant);">arrow_drop_down</span>
+                  
+                  <div class="custom-select-options hidden" id="${dropdownId}" 
+                       style="position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid var(--md-sys-color-outline); border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 1000; margin-top: 4px;">
+                    ${existingStandardNames.map((name) => `
+                      <div class="custom-select-option" onclick="selectProductDropdownOption(${rec.id}, '${esc(name).replace(/'/g, "\\'")}')" 
+                           style="padding: 8px 12px; cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s ease;">
+                        ${esc(name)}
+                      </div>
+                    `).join("")}
+                  </div>
+                </div>
+
+                <button class="small" onclick="event.stopPropagation(); assignUnassignedProductVariation(this, ${rec.id})">
+                  <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle;">check</span> Assign
+                </button>
+              </div>
+            </div>`;
+          }).join("")}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  container.innerHTML = `<div class="company-accordion-list">
+    ${groupList.map((g, index) => {
+      const inputId = `product-group-input-${index}`;
+      const idsJson = JSON.stringify(g.ids);
+      const isExpanded = expandedProductGroups.has(g.name);
+      const bodyClass = isExpanded ? "" : "hidden";
+      const iconClass = isExpanded ? "expanded" : "";
+      
+      return `
+      <div class="company-group-card" id="product-group-card-${index}">
+        <div class="company-group-header" onclick="toggleProductGroupExpand(${index}, '${esc(g.name).replace(/'/g, "\\'")}')">
+          <div class="header-left">
+            <span class="material-symbols-outlined expand-icon ${iconClass}" id="product-expand-icon-${index}">keyboard_arrow_right</span>
+            <input class="inline-edit group-name-input" id="${inputId}" value="${esc(g.name)}" readonly onclick="event.stopPropagation();" title="Standard product name" style="border:none; background:transparent;">
+            <span class="pill secondary" style="font-size: 11px; padding: 2px 8px;">${g.records.length} variations</span>
+          </div>
+          <div class="header-right" onclick="event.stopPropagation();">
+            ${statusText(g.status)}
+            <div class="mapping-actions">
+              <button class="small" onclick='mappingGroupAction(this, "product", ${idsJson}, "approve", "${inputId}")'>Approve Group</button>
+              <button class="small ghost" onclick='mappingGroupAction(this, "product", ${idsJson}, "reject", "${inputId}")'>Reject</button>
+            </div>
+          </div>
+        </div>
+        <div class="company-group-body ${bodyClass}" id="product-group-body-${index}">
+          <div class="raw-variations-list">
+            ${g.records.map((rec) => `
+              <div class="raw-variation-item">
+                <div class="raw-name-text">
+                  <span class="material-symbols-outlined muted" style="font-size:16px;">subdirectory_arrow_right</span>
+                  <strong>${esc(rec.raw_product_description)}</strong>
+                  <span class="pill confidence-pill ${confidenceClass(rec.confidence_score)}">${percent(rec.confidence_score)}</span>
+                </div>
+                <div class="raw-action">
+                  <button class="small ghost danger-btn" onclick="event.stopPropagation(); removeProductRawMapping(this, ${rec.id})" title="Remove from this group">
+                    <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle;">close</span> Remove
+                  </button>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      </div>`;
+    }).join("")}
+    ${unassignedHtml}
+  </div>`;
+
+  const miniHtml = rows.length ? `<table>
+    <thead><tr><th>Raw Product Description</th><th>Approved Standard Product</th><th>Status</th></tr></thead>
     <tbody>${rows.map((row) => `<tr>
       <td><strong>${esc(row.raw_product_description)}</strong></td>
-      <td>${esc(row.suggested_standard_product)}</td>
-      <td class="${confidenceClass(row.confidence_score)}">${percent(row.confidence_score)}</td>
-      <td>${esc(row.reason_for_suggestion || "")}</td>
-      <td>${esc(row.approved_standard_product)}</td>
-      <td>${masterText(row.is_master)}</td>
+      <td>${esc(row.approved_standard_product || row.suggested_standard_product)}</td>
       <td>${statusText(row.status)}</td>
     </tr>`).join("")}</tbody>
   </table>` : `<div class="empty">Import data to create product mapping rows.</div>`;
-  document.getElementById("productMappings").innerHTML = html;
-  document.getElementById("productMiniTable").innerHTML = html;
+  const miniTable = document.getElementById("productMiniTable");
+  if (miniTable) miniTable.innerHTML = miniHtml;
+
+  filterProductRegistry();
 }
 
-function renderCompanyMappings(rows) {
-  const html = rows.length ? `<table>
-    <thead><tr><th>Raw Company Name</th><th>Suggested Standard Company</th><th>Confidence</th><th>Role</th><th>Approved</th><th>Master</th><th>Status</th></tr></thead>
-    <tbody>${rows.map((row) => `<tr>
-      <td><strong>${esc(row.raw_company_name)}</strong></td>
-      <td>${esc(row.suggested_standard_company_name)}</td>
-      <td class="${confidenceClass(row.confidence_score)}">${percent(row.confidence_score)}</td>
-      <td>${esc(row.source_roles || "")}</td>
-      <td>${esc(row.approved_standard_company_name)}</td>
-      <td>${masterText(row.is_master)}</td>
-      <td>${statusText(row.status)}</td>
-    </tr>`).join("")}</tbody>
-  </table>` : `<div class="empty">Import data to create company mapping rows.</div>`;
-  document.getElementById("companyMappings").innerHTML = html;
-  document.getElementById("companyMiniTable").innerHTML = html;
+function toggleCountryGroupExpand(index, groupName) {
+  const body = document.getElementById(`country-group-body-${index}`);
+  const icon = document.getElementById(`country-expand-icon-${index}`);
+  if (body && icon) {
+    const isHidden = body.classList.toggle("hidden");
+    icon.classList.toggle("expanded", !isHidden);
+    if (!isHidden) {
+      expandedCountryGroups.add(groupName);
+    } else {
+      expandedCountryGroups.delete(groupName);
+    }
+  }
+}
+
+async function removeCountryRawMapping(button, id) {
+  await withBusy(button, "Removing...", async () => {
+    try {
+      await postJSON("/api/mapping-action", {
+        kind: "country",
+        id: id,
+        action: "reject",
+        value: ""
+      });
+      showToast("Removed variation from group. Re-running cleaning is recommended to update golden data.");
+      await loadReview();
+      await loadMappings();
+    } catch (err) {
+      showToast("Failed to remove variation: " + err.message, true);
+    }
+  });
+}
+
+async function assignUnassignedCountryVariation(button, id) {
+  const finalVal = document.getElementById(`unassigned-country-target-${id}`).value.trim();
+  
+  if (!finalVal) {
+    showToast("Please select an existing group or type a new standard country name.", true);
+    return;
+  }
+  
+  await withBusy(button, "Assigning...", async () => {
+    try {
+      await postJSON("/api/mapping-action", {
+        kind: "country",
+        id: id,
+        action: "approve",
+        value: finalVal
+      });
+      showToast(`Assigned variation to standard country name "${finalVal}". Re-run cleaning to update golden data.`);
+      await loadReview();
+      await loadMappings();
+    } catch (err) {
+      showToast("Failed to assign variation: " + err.message, true);
+    }
+  });
+}
+
+function filterCountryRegistry() {
+  const searchInput = document.getElementById("countryRegistrySearch");
+  if (!searchInput) return;
+  const query = searchInput.value.toLowerCase().trim();
+  const cards = document.querySelectorAll("#countryMappings .company-group-card");
+  
+  cards.forEach((card) => {
+    const input = card.querySelector(".group-name-input");
+    const name = input ? input.value.toLowerCase() : "";
+    
+    const rawItems = card.querySelectorAll(".raw-variation-item strong");
+    let rawMatch = false;
+    rawItems.forEach((item) => {
+      if (item.textContent.toLowerCase().includes(query)) {
+        rawMatch = true;
+      }
+    });
+
+    if (name.includes(query) || rawMatch || card.id === "country-group-card-unassigned") {
+      card.classList.remove("hidden");
+    } else {
+      card.classList.add("hidden");
+    }
+  });
+}
+
+function toggleCountrySelectDropdown(id) {
+  const dropdown = document.getElementById(`unassigned-country-options-${id}`);
+  if (dropdown) {
+    const isHidden = dropdown.classList.toggle("hidden");
+    if (!isHidden) {
+      document.querySelectorAll(".custom-select-options").forEach((el) => {
+        if (el.id !== `unassigned-country-options-${id}`) el.classList.add("hidden");
+      });
+    }
+  }
+}
+
+function filterCountrySelectOptions(id) {
+  const query = document.getElementById(`unassigned-country-target-${id}`).value.toLowerCase().trim();
+  const dropdown = document.getElementById(`unassigned-country-options-${id}`);
+  if (dropdown) {
+    dropdown.classList.remove("hidden");
+    const options = dropdown.querySelectorAll(".custom-select-option");
+    options.forEach((opt) => {
+      if (opt.textContent.toLowerCase().includes(query)) {
+        opt.classList.remove("hidden");
+      } else {
+        opt.classList.add("hidden");
+      }
+    });
+  }
+}
+
+function selectCountryDropdownOption(id, value) {
+  const input = document.getElementById(`unassigned-country-target-${id}`);
+  const dropdown = document.getElementById(`unassigned-country-options-${id}`);
+  if (input) {
+    input.value = value;
+  }
+  if (dropdown) {
+    dropdown.classList.add("hidden");
+  }
+}
+
+function selectCountryDropdownOptionAndFocus(id) {
+  const input = document.getElementById(`unassigned-country-target-${id}`);
+  const dropdown = document.getElementById(`unassigned-country-options-${id}`);
+  if (input) {
+    input.value = "";
+    input.focus();
+  }
+  if (dropdown) {
+    dropdown.classList.add("hidden");
+  }
 }
 
 function renderCountryMappings(rows) {
-  const html = rows.length ? `<table>
-    <thead><tr><th>Raw Country Name</th><th>Suggested Standard Country</th><th>Confidence</th><th>Role</th><th>Approved</th><th>Master</th><th>Status</th></tr></thead>
+  const container = document.getElementById("countryMappings");
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty">Import data to create country mapping rows.</div>`;
+    return;
+  }
+
+  const groups = {};
+  const unassignedRecords = [];
+
+  rows.forEach((row) => {
+    if (row.status === "Rejected" || (!row.approved_standard_country_name && !row.suggested_standard_country_name)) {
+      unassignedRecords.push(row);
+      return;
+    }
+
+    const std = row.approved_standard_country_name || row.suggested_standard_country_name || "UNKNOWN";
+    if (!groups[std]) {
+      groups[std] = {
+        name: std,
+        ids: [],
+        raw_names: [],
+        records: [],
+        avg_confidence: 0,
+        roles: new Set(),
+        reasons: new Set(),
+        statuses: new Set(),
+      };
+    }
+    const g = groups[std];
+    g.ids.push(row.id);
+    g.raw_names.push(row.raw_country_name);
+    g.records.push(row);
+    g.avg_confidence += row.confidence_score;
+    if (row.source_roles) g.roles.add(row.source_roles);
+    if (row.reason_for_suggestion) g.reasons.add(row.reason_for_suggestion);
+    g.statuses.add(row.status);
+  });
+
+  const groupList = Object.values(groups).map((g) => {
+    g.avg_confidence = g.avg_confidence / g.ids.length;
+    g.roles = Array.from(g.roles).join(", ");
+    g.reasons = Array.from(g.reasons).join("; ");
+    if (g.statuses.has("Pending")) g.status = "Pending";
+    else if (g.statuses.has("Rejected")) g.status = "Rejected";
+    else g.status = "Approved";
+    return g;
+  });
+
+  groupList.sort((a, b) => {
+    const aPending = a.status === "Pending" ? 1 : 0;
+    const bPending = b.status === "Pending" ? 1 : 0;
+    if (aPending !== bPending) {
+      return bPending - aPending;
+    }
+    return b.avg_confidence - a.avg_confidence;
+  });
+
+  const existingStandardNames = Object.keys(groups).sort();
+
+  let unassignedHtml = "";
+  if (unassignedRecords.length > 0) {
+    unassignedRecords.sort((a, b) => a.raw_country_name.localeCompare(b.raw_country_name));
+    const isExpanded = expandedCountryGroups.has("UNASSIGNED_CARD");
+    const bodyClass = isExpanded ? "" : "hidden";
+    const iconClass = isExpanded ? "expanded" : "";
+    
+    unassignedHtml = `
+    <div class="company-group-card" id="country-group-card-unassigned" style="border-color: var(--md-sys-color-error); background: rgba(211, 47, 47, 0.01);">
+      <div class="company-group-header" onclick="toggleCountryGroupExpand('unassigned', 'UNASSIGNED_CARD')" style="background: rgba(211, 47, 47, 0.03);">
+        <div class="header-left">
+          <span class="material-symbols-outlined expand-icon ${iconClass}" id="country-expand-icon-unassigned" style="color:var(--md-sys-color-error);">keyboard_arrow_right</span>
+          <strong style="color:var(--md-sys-color-error); font-weight: 600;">⚠️ Unallocated / Rejected Variations</strong>
+          <span class="pill error" style="background: var(--md-sys-color-error); color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 4px;">${unassignedRecords.length} variations</span>
+        </div>
+        <div class="header-right" onclick="event.stopPropagation();">
+          <span class="badge rejected">Needs Action</span>
+        </div>
+      </div>
+      <div class="company-group-body ${bodyClass}" id="country-group-body-unassigned">
+        <div class="raw-variations-list">
+          ${unassignedRecords.map((rec) => {
+            const targetId = `unassigned-country-target-${rec.id}`;
+            const dropdownId = `unassigned-country-options-${rec.id}`;
+            return `
+            <div class="raw-variation-item" style="padding: 12px 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+              <div class="raw-name-text" style="flex: 1; min-width: 200px;">
+                <span class="material-symbols-outlined muted" style="font-size:16px;">help_outline</span>
+                <strong>${esc(rec.raw_country_name)}</strong>
+                <span class="pill confidence-pill ${confidenceClass(rec.confidence_score)}">${percent(rec.confidence_score)}</span>
+                <span class="muted" style="font-size:11px;">(${esc(rec.source_roles || "")})</span>
+              </div>
+              <div class="raw-action" style="display: flex; gap: 8px; align-items: center; flex: 2; min-width: 300px; max-width: 600px;">
+                
+                <div class="custom-select-wrapper" style="position: relative; width: 100%; max-width: 450px;">
+                  <input type="text" class="inline-edit custom-select-input" id="${targetId}" 
+                         placeholder="Select existing or type new name..." 
+                         onclick="event.stopPropagation(); toggleCountrySelectDropdown(${rec.id})" 
+                         oninput="filterCountrySelectOptions(${rec.id})" 
+                         style="width: 100%; padding: 8px; border: 1px solid var(--md-sys-color-outline); border-radius: 4px; box-sizing: border-box; background: #fff; font-weight: 500;">
+                  <span class="material-symbols-outlined" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--md-sys-color-on-surface-variant);">arrow_drop_down</span>
+                  
+                  <div class="custom-select-options hidden" id="${dropdownId}" 
+                       style="position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid var(--md-sys-color-outline); border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 1000; margin-top: 4px;">
+                    <div class="custom-select-option" onclick="selectCountryDropdownOption(${rec.id}, '${esc(rec.raw_country_name).replace(/'/g, "\\'")}')" 
+                         style="padding: 8px 12px; cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s ease; border-bottom: 1px dashed var(--md-sys-color-outline); font-weight: 600; color: var(--md-sys-color-primary);">
+                      ✨ + Create New Group ("${esc(rec.raw_country_name)}")
+                    </div>
+                    <div class="custom-select-option" onclick="selectCountryDropdownOptionAndFocus(${rec.id})" 
+                         style="padding: 8px 12px; cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s ease; border-bottom: 1px solid var(--md-sys-color-outline); font-weight: 600; color: var(--md-sys-color-secondary);">
+                      ✍️ + Create New Group (type custom...)
+                    </div>
+                    ${existingStandardNames.map((name) => `
+                      <div class="custom-select-option" onclick="selectCountryDropdownOption(${rec.id}, '${esc(name).replace(/'/g, "\\'")}')" 
+                           style="padding: 8px 12px; cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s ease;">
+                        ${esc(name)}
+                      </div>
+                    `).join("")}
+                  </div>
+                </div>
+
+                <button class="small" onclick="event.stopPropagation(); assignUnassignedCountryVariation(this, ${rec.id})">
+                  <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle;">check</span> Assign
+                </button>
+              </div>
+            </div>`;
+          }).join("")}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  container.innerHTML = `<div class="company-accordion-list">
+    ${groupList.map((g, index) => {
+      const inputId = `country-group-input-${index}`;
+      const idsJson = JSON.stringify(g.ids);
+      const isExpanded = expandedCountryGroups.has(g.name);
+      const bodyClass = isExpanded ? "" : "hidden";
+      const iconClass = isExpanded ? "expanded" : "";
+      
+      return `
+      <div class="company-group-card" id="country-group-card-${index}">
+        <div class="company-group-header" onclick="toggleCountryGroupExpand(${index}, '${esc(g.name).replace(/'/g, "\\'")}')">
+          <div class="header-left">
+            <span class="material-symbols-outlined expand-icon ${iconClass}" id="country-expand-icon-${index}">keyboard_arrow_right</span>
+            <input class="inline-edit group-name-input" id="${inputId}" value="${esc(g.name)}" onclick="event.stopPropagation();" title="Edit standard country name">
+            <span class="pill secondary" style="font-size: 11px; padding: 2px 8px;">${g.records.length} variations</span>
+          </div>
+          <div class="header-right" onclick="event.stopPropagation();">
+            ${statusText(g.status)}
+            <div class="mapping-actions">
+              <button class="small" onclick='mappingGroupAction(this, "country", ${idsJson}, "approve", "${inputId}")'>Approve Group</button>
+              <button class="small ghost" onclick='mappingGroupAction(this, "country", ${idsJson}, "reject", "${inputId}")'>Reject</button>
+            </div>
+          </div>
+        </div>
+        <div class="company-group-body ${bodyClass}" id="country-group-body-${index}">
+          <div class="raw-variations-list">
+            ${g.records.map((rec) => `
+              <div class="raw-variation-item">
+                <div class="raw-name-text">
+                  <span class="material-symbols-outlined muted" style="font-size:16px;">subdirectory_arrow_right</span>
+                  <strong>${esc(rec.raw_country_name)}</strong>
+                  <span class="pill confidence-pill ${confidenceClass(rec.confidence_score)}">${percent(rec.confidence_score)}</span>
+                  <span class="muted" style="font-size:11px;">(${esc(rec.source_roles || "")})</span>
+                </div>
+                <div class="raw-action">
+                  <button class="small ghost danger-btn" onclick="event.stopPropagation(); removeCountryRawMapping(this, ${rec.id})" title="Remove from this group">
+                    <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle;">close</span> Remove
+                  </button>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      </div>`;
+    }).join("")}
+    ${unassignedHtml}
+  </div>`;
+
+  filterCountryRegistry();
+}
+
+
+function renderCompanyMappings(rows) {
+  const container = document.getElementById("companyMappings");
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty">Import data to create company mapping rows.</div>`;
+    return;
+  }
+
+  // Group company mapping rows by suggested/approved standard name, excluding unassigned/rejected ones
+  const groups = {};
+  const unassignedRecords = [];
+  
+  rows.forEach((row) => {
+    if (row.status === "Rejected" || (!row.approved_standard_company_name && !row.suggested_standard_company_name)) {
+      unassignedRecords.push(row);
+      return;
+    }
+
+    const std = row.approved_standard_company_name || row.suggested_standard_company_name || "UNKNOWN";
+    if (!groups[std]) {
+      groups[std] = {
+        name: std,
+        ids: [],
+        raw_names: [],
+        records: [],
+        avg_confidence: 0,
+        roles: new Set(),
+        reasons: new Set(),
+        statuses: new Set(),
+      };
+    }
+    const g = groups[std];
+    g.ids.push(row.id);
+    g.raw_names.push(row.raw_company_name);
+    g.records.push(row);
+    g.avg_confidence += row.confidence_score;
+    if (row.source_roles) g.roles.add(row.source_roles);
+    if (row.reason_for_suggestion) g.reasons.add(row.reason_for_suggestion);
+    g.statuses.add(row.status);
+  });
+
+  // Calculate average confidence and format group properties
+  const groupList = Object.values(groups).map((g) => {
+    g.avg_confidence = g.avg_confidence / g.ids.length;
+    g.roles = Array.from(g.roles).join(", ");
+    g.reasons = Array.from(g.reasons).join("; ");
+    if (g.statuses.has("Pending")) g.status = "Pending";
+    else if (g.statuses.has("Rejected")) g.status = "Rejected";
+    else g.status = "Approved";
+    return g;
+  });
+
+  // Sort groups: Pending first (so unapproved ones appear on top), then by confidence
+  groupList.sort((a, b) => {
+    const aPending = a.status === "Pending" ? 1 : 0;
+    const bPending = b.status === "Pending" ? 1 : 0;
+    if (aPending !== bPending) {
+      return bPending - aPending;
+    }
+    return b.avg_confidence - a.avg_confidence;
+  });
+
+  const existingStandardNames = Object.keys(groups).sort();
+
+  let unassignedHtml = "";
+  if (unassignedRecords.length > 0) {
+    unassignedRecords.sort((a, b) => a.raw_company_name.localeCompare(b.raw_company_name));
+    const isExpanded = expandedCompanyGroups.has("UNASSIGNED_CARD");
+    const bodyClass = isExpanded ? "" : "hidden";
+    const iconClass = isExpanded ? "expanded" : "";
+    
+    unassignedHtml = `
+    <div class="company-group-card" id="company-group-card-unassigned" style="border-color: var(--md-sys-color-error); background: rgba(211, 47, 47, 0.01);">
+      <div class="company-group-header" onclick="toggleGroupExpand('unassigned', 'UNASSIGNED_CARD')" style="background: rgba(211, 47, 47, 0.03);">
+        <div class="header-left">
+          <span class="material-symbols-outlined expand-icon ${iconClass}" id="expand-icon-unassigned" style="color:var(--md-sys-color-error);">keyboard_arrow_right</span>
+          <strong style="color:var(--md-sys-color-error); font-weight: 600;">⚠️ Unallocated / Rejected Variations</strong>
+          <span class="pill error" style="background: var(--md-sys-color-error); color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 4px;">${unassignedRecords.length} variations</span>
+        </div>
+        <div class="header-right" onclick="event.stopPropagation();">
+          <span class="badge rejected">Needs Action</span>
+        </div>
+      </div>
+      <div class="company-group-body ${bodyClass}" id="company-group-body-unassigned">
+        <div class="raw-variations-list">
+          ${unassignedRecords.map((rec) => {
+            const targetId = `unassigned-target-${rec.id}`;
+            const dropdownId = `unassigned-options-${rec.id}`;
+            return `
+            <div class="raw-variation-item" style="padding: 12px 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+              <div class="raw-name-text" style="flex: 1; min-width: 200px;">
+                <span class="material-symbols-outlined muted" style="font-size:16px;">help_outline</span>
+                <strong>${esc(rec.raw_company_name)}</strong>
+                <span class="pill confidence-pill ${confidenceClass(rec.confidence_score)}">${percent(rec.confidence_score)}</span>
+                <span class="muted" style="font-size:11px;">(${esc(rec.source_roles || "")})</span>
+              </div>
+              <div class="raw-action" style="display: flex; gap: 8px; align-items: center; flex: 2; min-width: 300px; max-width: 600px;">
+                
+                <div class="custom-select-wrapper" style="position: relative; width: 100%; max-width: 450px;">
+                  <input type="text" class="inline-edit custom-select-input" id="${targetId}" 
+                         placeholder="Select existing or type new name..." 
+                         onclick="event.stopPropagation(); toggleSelectDropdown(${rec.id})" 
+                         oninput="filterSelectOptions(${rec.id})" 
+                         style="width: 100%; padding: 8px; border: 1px solid var(--md-sys-color-outline); border-radius: 4px; box-sizing: border-box; background: #fff; font-weight: 500;">
+                  <span class="material-symbols-outlined" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--md-sys-color-on-surface-variant);">arrow_drop_down</span>
+                  
+                  <div class="custom-select-options hidden" id="${dropdownId}" 
+                       style="position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid var(--md-sys-color-outline); border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 1000; margin-top: 4px;">
+                    <div class="custom-select-option" onclick="selectDropdownOption(${rec.id}, '${esc(rec.raw_company_name).replace(/'/g, "\\'")}')" 
+                         style="padding: 8px 12px; cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s ease; border-bottom: 1px dashed var(--md-sys-color-outline); font-weight: 600; color: var(--md-sys-color-primary);">
+                      ✨ + Create New Group ("${esc(rec.raw_company_name)}")
+                    </div>
+                    <div class="custom-select-option" onclick="selectDropdownOptionAndFocus(${rec.id})" 
+                         style="padding: 8px 12px; cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s ease; border-bottom: 1px solid var(--md-sys-color-outline); font-weight: 600; color: var(--md-sys-color-secondary);">
+                      ✍️ + Create New Group (type custom...)
+                    </div>
+                    ${existingStandardNames.map((name) => `
+                      <div class="custom-select-option" onclick="selectDropdownOption(${rec.id}, '${esc(name).replace(/'/g, "\\'")}')" 
+                           style="padding: 8px 12px; cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s ease;">
+                        ${esc(name)}
+                      </div>
+                    `).join("")}
+                  </div>
+                </div>
+
+                <button class="small" onclick="event.stopPropagation(); assignUnassignedVariation(this, ${rec.id})">
+                  <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle;">check</span> Assign
+                </button>
+              </div>
+            </div>`;
+          }).join("")}
+        </div>
+      </div>
+    </div>`;
+  }
+
+  container.innerHTML = `<div class="company-accordion-list">
+    ${groupList.map((g, index) => {
+      const inputId = `company-group-input-${index}`;
+      const idsJson = JSON.stringify(g.ids);
+      const isExpanded = expandedCompanyGroups.has(g.name);
+      const bodyClass = isExpanded ? "" : "hidden";
+      const iconClass = isExpanded ? "expanded" : "";
+      
+      return `
+      <div class="company-group-card" id="company-group-card-${index}">
+        <div class="company-group-header" onclick="toggleGroupExpand(${index}, '${esc(g.name).replace(/'/g, "\\'")}')">
+          <div class="header-left">
+            <span class="material-symbols-outlined expand-icon ${iconClass}" id="expand-icon-${index}">keyboard_arrow_right</span>
+            <input class="inline-edit group-name-input" id="${inputId}" value="${esc(g.name)}" onclick="event.stopPropagation();" title="Edit standard company name">
+            <span class="pill secondary" style="font-size: 11px; padding: 2px 8px;">${g.records.length} variations</span>
+          </div>
+          <div class="header-right" onclick="event.stopPropagation();">
+            ${statusText(g.status)}
+            <div class="mapping-actions">
+              <button class="small" onclick='mappingGroupAction(this, "company", ${idsJson}, "approve", "${inputId}")'>Approve Group</button>
+              <button class="small ghost" onclick='mappingGroupAction(this, "company", ${idsJson}, "reject", "${inputId}")'>Reject</button>
+            </div>
+          </div>
+        </div>
+        <div class="company-group-body ${bodyClass}" id="company-group-body-${index}">
+          <div class="raw-variations-list">
+            ${g.records.map((rec) => `
+              <div class="raw-variation-item">
+                <div class="raw-name-text">
+                  <span class="material-symbols-outlined muted" style="font-size:16px;">subdirectory_arrow_right</span>
+                  <strong>${esc(rec.raw_company_name)}</strong>
+                  <span class="pill confidence-pill ${confidenceClass(rec.confidence_score)}">${percent(rec.confidence_score)}</span>
+                  <span class="muted" style="font-size:11px;">(${esc(rec.source_roles || "")})</span>
+                </div>
+                <div class="raw-action">
+                  <button class="small ghost danger-btn" onclick="event.stopPropagation(); removeRawMapping(this, ${rec.id})" title="Remove from this group">
+                    <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle;">close</span> Remove
+                  </button>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      </div>`;
+    }).join("")}
+    ${unassignedHtml}
+  </div>`;
+
+  // Update companyMiniTable in dashboard or quality summary as well
+  const miniHtml = rows.length ? `<table>
+    <thead><tr><th>Raw Company Name</th><th>Approved Standard Company</th><th>Status</th></tr></thead>
     <tbody>${rows.map((row) => `<tr>
-      <td><strong>${esc(row.raw_country_name)}</strong></td>
-      <td>${esc(row.suggested_standard_country_name)}</td>
-      <td class="${confidenceClass(row.confidence_score)}">${percent(row.confidence_score)}</td>
-      <td>${esc(row.source_roles || "")}</td>
-      <td>${esc(row.approved_standard_country_name)}</td>
-      <td>${masterText(row.is_master)}</td>
+      <td><strong>${esc(row.raw_company_name)}</strong></td>
+      <td>${esc(row.approved_standard_company_name || row.suggested_standard_company_name)}</td>
       <td>${statusText(row.status)}</td>
     </tr>`).join("")}</tbody>
-  </table>` : `<div class="empty">Import data to create country mapping rows.</div>`;
-  document.getElementById("countryMappings").innerHTML = html;
+  </table>` : `<div class="empty">Import data to create company mapping rows.</div>`;
+  const miniTable = document.getElementById("companyMiniTable");
+  if (miniTable) miniTable.innerHTML = miniHtml;
+
+  // Re-apply filter if user is searching
+  filterCompanyRegistry();
 }
 
 function clearFilters() {
@@ -1643,12 +1932,13 @@ async function copyOutput() {
 
 function statusText(value) {
   const text = String(value || "");
-  const cls = text === "Pending" || text === "Suggested" ? "warning-text" : text === "Rejected" ? "danger-text" : "approved-text";
+  const lower = text.toLowerCase();
+  const cls = lower.includes("reject")
+    ? "danger-text"
+    : lower.includes("pending") || lower.includes("suggest") || lower.includes("needs") || lower.includes("review") || lower.includes("missing")
+      ? "warning-text"
+      : "approved-text";
   return `<span class="${cls}">${esc(text)}</span>`;
-}
-
-function masterText(value) {
-  return Number(value || 0) ? `<span class="approved-text">Yes</span>` : `<span class="muted">No</span>`;
 }
 
 function confidenceClass(value) {
@@ -1696,7 +1986,6 @@ function setTooltipTitles() {
 }
 
 setTooltipTitles();
-renderProductOptionDatalist();
 window.addEventListener("popstate", async () => {
   const page = pathToPage(window.location.pathname);
   if (page === "opportunity-detail") await loadOpportunityDetailFromPath();
@@ -1705,6 +1994,7 @@ window.addEventListener("popstate", async () => {
 });
 refreshAll()
   .then(async () => {
+    await loadAutomationSettings();
     const page = pathToPage(window.location.pathname);
     if (page === "opportunity-detail") await loadOpportunityDetailFromPath();
     if (page === "pitch") await loadPitchFromPath();
@@ -1717,12 +2007,11 @@ function pageToPath(page) {
     review: "/cleaning-review",
     dashboard: "/dashboard",
     opportunities: "/opportunities",
-    products: "/cleaning-review",
-    companies: "/cleaning-review",
-    countries: "/cleaning-review",
-    cleaning: "/cleaning-review",
     "opportunity-detail": window.location.pathname.startsWith("/opportunities/") ? window.location.pathname : "/opportunities",
     pitch: window.location.pathname.startsWith("/pitch/") ? window.location.pathname : "/pitch",
+    products: "/products",
+    companies: "/companies",
+    countries: "/countries",
   }[page] || "/";
 }
 
@@ -1733,6 +2022,275 @@ function pathToPage(path) {
     "/cleaning-review": "review",
     "/dashboard": "dashboard",
     "/opportunities": "opportunities",
-    "/countries": "review",
+    "/products": "products",
+    "/companies": "companies",
+    "/countries": "countries",
   }[path] || "upload";
+}
+
+
+// --- Automated Scheduling Settings ---
+async function loadAutomationSettings() {
+  try {
+    const settings = await getJSON("/api/settings");
+    if (settings) {
+      document.getElementById("autoSyncEnabled").checked = !!settings.auto_sync_enabled;
+      document.getElementById("autoSyncInterval").value = String(settings.auto_sync_interval_hours || 24);
+      document.getElementById("autoSyncQuery").value = settings.sync_query || "Duloxetine";
+      
+      const lblStatus = document.getElementById("lblSyncStatus");
+      if (lblStatus) {
+        lblStatus.textContent = settings.sync_status || "Idle";
+        lblStatus.className = "pill " + (settings.sync_status?.toLowerCase().includes("success") ? "success" : settings.sync_status?.toLowerCase().includes("sync") ? "primary" : "warning");
+      }
+      
+      const lblTime = document.getElementById("lblSyncTime");
+      if (lblTime) {
+        if (settings.last_sync_timestamp) {
+          lblTime.textContent = new Date(settings.last_sync_timestamp * 1000).toLocaleString();
+        } else {
+          lblTime.textContent = "Never";
+        }
+      }
+    }
+  } catch (error) {
+    showToast("Error loading automation settings: " + error.message, true);
+  }
+}
+
+async function saveAutomationSettings(button) {
+  await withBusy(button, "Saving...", async () => {
+    const auto_sync_enabled = document.getElementById("autoSyncEnabled").checked ? 1 : 0;
+    const auto_sync_interval_hours = parseInt(document.getElementById("autoSyncInterval").value) || 24;
+    const sync_query = document.getElementById("autoSyncQuery").value.trim() || "Duloxetine";
+    const chemdoze_email = document.getElementById("chemdozeEmail").value.trim();
+    const chemdoze_password = document.getElementById("chemdozePassword").value;
+    const sync_from_date = document.getElementById("chemdozeFromDate").value.trim() || "01/01/2020";
+    const sync_to_date = document.getElementById("chemdozeToDate").value.trim() || "28/02/2026";
+    
+    const settings = await postJSON("/api/settings", {
+      auto_sync_enabled,
+      auto_sync_interval_hours,
+      sync_query,
+      chemdoze_email,
+      chemdoze_password,
+      sync_from_date,
+      sync_to_date
+    });
+    
+    showToast("Automation settings saved successfully!");
+    await loadAutomationSettings();
+  });
+}
+
+// --- Import Local Downloads Excel File ---
+async function importLocalDownloadsFile(button) {
+  await withBusy(button, "Syncing File...", async () => {
+    setStatus("Cleaning and importing local downloads file...");
+    try {
+      const result = await postJSON("/api/import-downloads-file", {});
+      renderImportResult(result);
+      await refreshAll();
+      setStatus(`Direct Downloads import complete: ${result.clean_rows} rows imported. Mappings updated!`);
+      showToast("Downloads file imported successfully!");
+      showPage("review");
+    } catch (err) {
+      setStatus(err.message || String(err), true);
+      showToast(err.message || "Failed to find downloads Excel file.", true);
+    }
+  });
+}
+
+// --- Client-Side PDF Generation ---
+function downloadPitchPDF() {
+  const element = document.getElementById("pitchContent");
+  if (!element || element.textContent.includes("No pitch loaded yet")) {
+    showToast("Load a pitch in the workspace first.", true);
+    return;
+  }
+  
+  // Extract company name for the PDF filename
+  const heading = element.querySelector("h2") || element.querySelector("h1");
+  let customerName = "Customer";
+  if (heading) {
+    const text = heading.textContent;
+    const match = text.match(/customer\s*:\s*([^$\n]+)/i) || text.match(/target\s*customer\s*:\s*([^$\n]+)/i);
+    if (match) customerName = match[1].trim();
+  }
+  
+  const opt = {
+    margin:       [15, 15],
+    filename:     customerName.replace(/[^A-Za-z0-9]+/g, "_") + "_Duloxetine_Pitch_Report.pdf",
+    image:        { type: 'jpeg', quality: 0.98 },
+    html2canvas:  { scale: 2, useCORS: true },
+    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  };
+  
+  showToast("Generating PDF report...");
+  html2pdf().set(opt).from(element).save()
+    .then(() => {
+      showToast("PDF downloaded successfully!");
+    })
+    .catch((err) => {
+      showToast("PDF generation failed: " + err.message, true);
+    });
+}
+
+// --- Outreach Composer Dialog (Modal) ---
+function openOutreachComposer() {
+  const content = document.getElementById("pitchContent");
+  if (!content || content.textContent.includes("No pitch loaded yet")) {
+    showToast("Generate a pitch first before opening the composer.", true);
+    return;
+  }
+  
+  // Try to locate selected opportunity details
+  let customerEmail = "";
+  let subject = "Duloxetine API & Pellets Supply Collaboration - Shodhana Labs";
+  let body = "";
+  
+  // Find email from page elements
+  const emailDraftArea = document.getElementById("activeEmailDraft");
+  if (emailDraftArea) {
+    body = emailDraftArea.textContent || emailDraftArea.innerText;
+    // Extract subject line if present in body
+    const matchSub = body.match(/Subject\s*:\s*([^\n]+)/i);
+    if (matchSub) {
+      subject = matchSub[1].trim();
+      body = body.substring(body.indexOf("\n", body.indexOf(subject)) + 1).trim();
+    }
+  }
+  
+  // Pre-fill importer contact details if available in detail
+  if (pitchData && pitchData.detail && pitchData.detail.opportunity) {
+    const opp = pitchData.detail.opportunity;
+    if (opp.importer) {
+      // Create a mock email address like purchasing@importername.com
+      const domain = opp.importer.toLowerCase().replace(/[^a-z0-9]+/g, "") + ".com";
+      customerEmail = "purchasing@" + domain;
+    }
+  }
+  
+  document.getElementById("emailRecipient").value = customerEmail;
+  document.getElementById("emailSubject").value = subject;
+  document.getElementById("emailBody").value = body;
+  
+  document.getElementById("emailModal").classList.remove("hidden");
+}
+
+function closeEmailModal() {
+  document.getElementById("emailModal").classList.add("hidden");
+}
+
+function openMailtoLink() {
+  const to = document.getElementById("emailRecipient").value;
+  const sub = document.getElementById("emailSubject").value;
+  const body = document.getElementById("emailBody").value;
+  
+  const link = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(sub)}&body=${encodeURIComponent(body)}`;
+  window.open(link, "_blank");
+}
+
+async function sendEmailAction(button) {
+  const to = document.getElementById("emailRecipient").value.trim();
+  const sub = document.getElementById("emailSubject").value.trim();
+  const body = document.getElementById("emailBody").value.trim();
+  
+  if (!to) {
+    showToast("Recipient email is required.", true);
+    return;
+  }
+  
+  // Use current opportunity ID if available
+  const oppId = pitchData?.opportunity_id || pitchData?.detail?.opportunity?.opportunity_id || "general";
+  
+  await withBusy(button, "Sending...", async () => {
+    try {
+      await postJSON("/api/send-email", {
+        opportunity_id: oppId,
+        recipient_email: to,
+        subject: sub,
+        body: body
+      });
+      showToast("Email dispatched and logged successfully!");
+      closeEmailModal();
+      await loadSentEmailsList();
+    } catch (err) {
+      showToast("Failed to send: " + err.message, true);
+    }
+  });
+}
+
+// --- Display Sent Email Logs ---
+async function loadSentEmailsList() {
+  const container = document.getElementById("sentEmailsLogs");
+  if (!container) return;
+  
+  const oppId = pitchData?.opportunity_id || pitchData?.detail?.opportunity?.opportunity_id || "general";
+  try {
+    const res = await getJSON(`/api/sent-emails?opportunity_id=${oppId}`);
+    const rows = res.rows || [];
+    if (rows.length === 0) {
+      container.innerHTML = `<p style="font-size:12px; color:var(--md-sys-color-on-surface-variant); margin-top:8px;">No email history recorded for this lead.</p>`;
+      return;
+    }
+    
+    container.innerHTML = rows.map((row) => `
+      <div style="border:1px solid var(--md-sys-color-outline); border-radius:8px; padding:12px; margin-top:8px; background:#fff;">
+        <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:500; color:var(--md-sys-color-on-surface-variant); margin-bottom:6px;">
+          <span>To: <strong>${esc(row.recipient_email)}</strong></span>
+          <span>${new Date(row.sent_at * 1000).toLocaleString()}</span>
+        </div>
+        <div style="font-size:13px; font-weight:600; margin-bottom:4px;">Subject: ${esc(row.subject)}</div>
+        <div style="font-size:12px; white-space:pre-wrap; max-height:80px; overflow:auto; color:var(--md-sys-color-on-surface-variant); background:#fcfcfc; padding:8px; border-radius:4px; border:1px solid #f0f0f0;">${esc(row.body)}</div>
+      </div>
+    `).join("");
+  } catch (e) {
+    console.error("Error loading sent emails:", e);
+  }
+}
+
+// --- Toast Notification Helper ---
+function showToast(message, isError = false) {
+  const container = document.getElementById("toastContainer");
+  if (!container) return;
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  if (isError) {
+    toast.style.background = "#fce8e6";
+    toast.style.color = "var(--md-sys-color-error)";
+  }
+  toast.innerHTML = `<span class="material-symbols-outlined" style="font-size: 20px;">${isError ? 'error' : 'check_circle'}</span> ${esc(message)}`;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(20px)";
+    toast.style.transition = "all 0.3s ease";
+    setTimeout(() => toast.remove(), 300);
+  }, 3500);
+}
+
+// --- Group Mapping Actions ---
+async function mappingGroupAction(button, kind, ids, action, valueInputId) {
+  const valueEl = document.getElementById(valueInputId);
+  const value = valueEl ? valueEl.value.trim() : "";
+  
+  let label = "Approving...";
+  if (action === "edit") label = "Applying...";
+  if (action === "reject") label = "Rejecting...";
+  
+  await withBusy(button, label, async () => {
+    try {
+      // Process sequentially to avoid SQLite database locks
+      for (const id of ids) {
+        await postJSON("/api/mapping-action", {kind, id, action, value});
+      }
+      showToast(`Successfully processed group action (${action}) for ${ids.length} mappings.`);
+      setStatus(`Group mapping ${action} completed. Click Re-run Cleaning to rebuild golden data.`);
+      await loadReview();
+      await loadMappings();
+    } catch (err) {
+      showToast("Failed to process group action: " + err.message, true);
+    }
+  });
 }

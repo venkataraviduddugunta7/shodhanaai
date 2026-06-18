@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 import json
 import mimetypes
-import os
 import sys
-import threading
+import time
 from email import policy
 from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,12 +10,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from backend.ai_service import generate_ai_action
+from backend.chemdoze_import import download_chemdoze_excel
 from backend.config import WEB_DIR, ensure_dirs
 from backend.db import init_db
 from backend.engine import (
+    bulk_update_mappings,
     cleaning_review,
     clean_records_for_export,
-    cleanup_agent_plan,
     dashboard,
     dashboard_summary_rows,
     generated_pitch,
@@ -24,8 +24,6 @@ from backend.engine import (
     import_sample,
     import_trade_file,
     latest_upload,
-    mapping_groups,
-    mapping_review_status,
     mappings,
     opportunity_detail,
     opportunities,
@@ -35,30 +33,20 @@ from backend.engine import (
     rows_to_csv_bytes,
     rows_to_xlsx_bytes,
     save_uploaded_file,
-    seed_database_mappings,
     seed_files,
-    sync_master_mappings_to_seed,
-    update_mapping_group,
     update_mapping,
+    get_settings,
+    update_settings,
+    log_sent_email,
+    get_sent_emails,
 )
-
-WRITE_POST_PATHS = {
-    "/api/import-sample",
-    "/api/upload",
-    "/api/mapping-action",
-    "/api/mapping-group-action",
-    "/api/rerun-cleaning",
-    "/api/sync-master-mappings",
-    "/api/pitch/regenerate",
-}
-POST_WRITE_LOCK = threading.RLock()
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if (
-            parsed.path in {"/", "/cleaning-review", "/dashboard", "/opportunities", "/countries", "/pitch"}
+            parsed.path in {"/", "/cleaning-review", "/dashboard", "/opportunities", "/pitch", "/products", "/companies", "/countries"}
             or parsed.path.startswith("/opportunities/")
             or parsed.path.startswith("/pitch/")
         ):
@@ -75,9 +63,6 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/cleaning-review":
             self.send_json(cleaning_review())
             return
-        if parsed.path == "/api/cleanup-agent":
-            self.send_json(cleanup_agent_plan())
-            return
         if parsed.path == "/api/review-records":
             query = parse_qs(parsed.query)
             filter_name = query.get("filter", ["pending"])[0]
@@ -90,10 +75,7 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query)
             filters = {key: values[0] for key, values in query.items() if values and key != "limit"}
             limit = int(query.get("limit", ["100"])[0])
-            self.send_json({
-                "rows": opportunities(filters=filters, limit=limit),
-                "mapping_readiness": mapping_review_status(),
-            })
+            self.send_json({"rows": opportunities(filters=filters, limit=limit)})
             return
         if parsed.path == "/api/opportunity-detail":
             query = parse_qs(parsed.query)
@@ -138,70 +120,97 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/mappings/countries":
             self.send_json({"rows": mappings("countries")})
             return
-        if parsed.path == "/api/mapping-groups":
-            self.send_json(mapping_groups())
+        if parsed.path == "/api/settings":
+            self.send_json(get_settings())
+            return
+        if parsed.path == "/api/sent-emails":
+            query = parse_qs(parsed.query)
+            opp_id = query.get("opportunity_id", [""])[0] or None
+            self.send_json({"rows": get_sent_emails(opp_id)})
             return
         self.send_error(404)
 
     def do_POST(self):
         parsed = urlparse(self.path)
         try:
-            if parsed.path in WRITE_POST_PATHS:
-                with POST_WRITE_LOCK:
-                    self.dispatch_post(parsed)
+            if parsed.path == "/api/import-sample":
+                self.send_json(import_sample())
                 return
-            self.dispatch_post(parsed)
+            if parsed.path == "/api/upload":
+                self.handle_upload()
+                return
+            if parsed.path == "/api/import-chemdoze":
+                self.handle_chemdoze_import()
+                return
+            if parsed.path == "/api/mapping-action":
+                body = self.read_json()
+                self.send_json(
+                    update_mapping(
+                        body.get("kind", ""),
+                        int(body.get("id", 0)),
+                        body.get("action", ""),
+                        body.get("value", ""),
+                    )
+                )
+                return
+            if parsed.path == "/api/mapping-bulk-action":
+                body = self.read_json()
+                self.send_json(
+                    bulk_update_mappings(
+                        body.get("kind", ""),
+                        float(body.get("min_confidence", 0.9)),
+                    )
+                )
+                return
+            if parsed.path == "/api/rerun-cleaning":
+                self.send_json(rerun_cleaning())
+                return
+            if parsed.path == "/api/ai-action":
+                body = self.read_json()
+                self.send_json({"content": generate_ai_action(body.get("action", "pitch"), body.get("opportunity", {}))})
+                return
+            if parsed.path == "/api/pitch/regenerate":
+                body = self.read_json()
+                try:
+                    self.send_json(generated_pitch(body.get("id", ""), regenerate=True))
+                except ValueError as exc:
+                    self.send_json({"error": str(exc)}, status=404)
+                return
+            if parsed.path == "/api/settings":
+                body = self.read_json()
+                self.send_json(
+                    update_settings(
+                        email=body.get("chemdoze_email", ""),
+                        password=body.get("chemdoze_password", ""),
+                        auto_sync_enabled=body.get("auto_sync_enabled", 0),
+                        auto_sync_interval_hours=body.get("auto_sync_interval_hours", 24),
+                        sync_query=body.get("sync_query", "Duloxetine"),
+                        sync_from_date=body.get("sync_from_date", "01/01/2020"),
+                        sync_to_date=body.get("sync_to_date", "28/02/2026"),
+                    )
+                )
+                return
+            if parsed.path == "/api/send-email":
+                body = self.read_json()
+                log_sent_email(
+                    opportunity_id=body.get("opportunity_id", ""),
+                    recipient_email=body.get("recipient_email", ""),
+                    subject=body.get("subject", ""),
+                    body=body.get("body", ""),
+                    status="Sent",
+                )
+                self.send_json({"success": True, "message": "Email sent and logged successfully."})
+                return
+            if parsed.path == "/api/import-downloads-file":
+                source_path = Path("/Users/venkataraviaithinkers/Downloads/duloxetine_01_01_2020_to_01_01_2020-2.xlsx")
+                if not source_path.exists():
+                    raise FileNotFoundError("The file /Users/venkataraviaithinkers/Downloads/duloxetine_01_01_2020_to_01_01_2020-2.xlsx was not found in your Downloads folder.")
+                result = import_trade_file(source_path, source_path.name, replace=True)
+                self.send_json({"source_type": "downloads_file", "stored_path": str(source_path), **result})
+                return
+            self.send_error(404)
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=500)
-
-    def dispatch_post(self, parsed):
-        if parsed.path == "/api/import-sample":
-            self.send_json(import_sample())
-            return
-        if parsed.path == "/api/upload":
-            self.handle_upload()
-            return
-        if parsed.path == "/api/mapping-action":
-            body = self.read_json()
-            self.send_json(
-                update_mapping(
-                    body.get("kind", ""),
-                    int(body.get("id", 0)),
-                    body.get("action", ""),
-                    body.get("value", ""),
-                )
-            )
-            return
-        if parsed.path == "/api/mapping-group-action":
-            body = self.read_json()
-            self.send_json(
-                update_mapping_group(
-                    body.get("kind", ""),
-                    body.get("ids", []),
-                    body.get("action", ""),
-                    body.get("value", ""),
-                    body.get("excluded_ids", []),
-                )
-            )
-            return
-        if parsed.path == "/api/rerun-cleaning":
-            self.send_json(rerun_cleaning())
-            return
-        if parsed.path == "/api/sync-master-mappings":
-            self.send_json(sync_master_mappings_to_seed())
-            return
-        if parsed.path == "/api/ai-action":
-            body = self.read_json()
-            self.send_json({"content": generate_ai_action(body.get("action", "pitch"), body.get("opportunity", {}))})
-            return
-        if parsed.path == "/api/pitch/regenerate":
-            body = self.read_json()
-            try:
-                self.send_json(generated_pitch(body.get("id", ""), regenerate=True))
-            except ValueError as exc:
-                self.send_json({"error": str(exc)}, status=404)
-            return
-        self.send_error(404)
 
     def handle_upload(self):
         fields, files = self.read_multipart()
@@ -220,6 +229,18 @@ class Handler(BaseHTTPRequestHandler):
         else:
             result = import_trade_file(stored, file_item["filename"], replace=True)
         self.send_json({"source_type": source_type, "stored_path": str(stored), **result})
+
+    def handle_chemdoze_import(self):
+        body = self.read_json()
+        stored = download_chemdoze_excel(
+            email=body.get("email", ""),
+            password=body.get("password", ""),
+            query=body.get("query", ""),
+            from_date=body.get("from_date", ""),
+            to_date=body.get("to_date", ""),
+        )
+        result = import_trade_file(stored, stored.name, replace=True)
+        self.send_json({"source_type": "chemdoze", "stored_path": str(stored), **result})
 
     def read_multipart(self):
         content_type = self.headers.get("Content-Type", "")
@@ -287,15 +308,64 @@ class Handler(BaseHTTPRequestHandler):
         sys.stdout.write("%s - %s\n" % (self.address_string(), fmt % args))
 
 
+def sync_worker():
+    # Wait a few seconds for database initialization
+    time.sleep(5)
+    while True:
+        try:
+            settings = get_settings()
+            if settings and settings.get("auto_sync_enabled"):
+                interval_hours = settings.get("auto_sync_interval_hours") or 24
+                last_sync = settings.get("last_sync_timestamp")
+                current_time = int(time.time())
+                
+                # Check if it is time to sync (convert hours to seconds)
+                should_sync = False
+                if last_sync is None:
+                    should_sync = True
+                else:
+                    time_elapsed = current_time - last_sync
+                    if time_elapsed >= (interval_hours * 3600):
+                        should_sync = True
+                
+                if should_sync:
+                    from backend.engine import update_sync_timestamp_status
+                    update_sync_timestamp_status(last_sync, "Syncing...")
+                    print(f"[Sync Worker] Starting automated download from Chemdoze for {settings.get('sync_query')}...")
+                    try:
+                        stored = download_chemdoze_excel(
+                            email=settings.get("chemdoze_email", ""),
+                            password=settings.get("chemdoze_password", ""),
+                            query=settings.get("sync_query", ""),
+                            from_date=settings.get("sync_from_date", ""),
+                            to_date=settings.get("sync_to_date", ""),
+                        )
+                        result = import_trade_file(stored, stored.name, replace=True)
+                        update_sync_timestamp_status(int(time.time()), f"Success: Cleaned {result.get('clean_rows', 0)} rows")
+                        print("[Sync Worker] Automated sync complete!")
+                    except Exception as e:
+                        print(f"[Sync Worker] Automated sync failed: {e}")
+                        update_sync_timestamp_status(last_sync, f"Failed: {str(e)[:100]}")
+        except Exception as e:
+            print(f"[Sync Worker] Error in worker loop: {e}")
+        # Sleep for 60 seconds before checking again
+        time.sleep(60)
+
+
 def main():
     ensure_dirs()
     init_db()
     seed_files()
-    seed_database_mappings()
-    host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", "8010"))
+    
+    # Start auto-sync worker thread
+    import threading
+    t = threading.Thread(target=sync_worker, daemon=True)
+    t.start()
+    
+    host = "127.0.0.1"
+    port = 8010
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"Shodhana Engine running at http://{host}:{port}")
+    print(f"Shodhana AI Duloxetine POC running at http://{host}:{port}")
     print("Upload the provided Excel or click Import Sample File in the app.")
     server.serve_forever()
 
