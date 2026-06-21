@@ -39,14 +39,19 @@ from backend.engine import (
     update_settings,
     log_sent_email,
     get_sent_emails,
+    run_agentic_automap,
 )
+
+from backend.growth_advisor import generate_growth_insights
+from backend.ppt_generator import generate_pitch_pptx
+
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if (
-            parsed.path in {"/", "/cleaning-review", "/dashboard", "/opportunities", "/pitch", "/products", "/companies", "/countries"}
+            parsed.path in {"/", "/cleaning-review", "/dashboard", "/opportunities", "/pitch", "/products", "/companies", "/countries", "/advisor"}
             or parsed.path.startswith("/opportunities/")
             or parsed.path.startswith("/pitch/")
         ):
@@ -128,6 +133,26 @@ class Handler(BaseHTTPRequestHandler):
             opp_id = query.get("opportunity_id", [""])[0] or None
             self.send_json({"rows": get_sent_emails(opp_id)})
             return
+        if parsed.path == "/api/growth-insights":
+            self.send_json(generate_growth_insights(self.query_filters(parsed.query)))
+            return
+        if parsed.path == "/api/export/pitch-deck":
+            query = parse_qs(parsed.query)
+            opp_id = query.get("opportunity_id", [""])[0]
+            try:
+                opp_data = opportunity_detail(opp_id)
+                pptx_buffer, success = generate_pitch_pptx(opp_data)
+                cust_name = opp_data.get('opportunity', {}).get('importer', 'customer')
+                clean_name = "".join(c if c.isalnum() else "_" for c in cust_name)
+                filename = f"pitch_{clean_name}.pptx"
+                self.send_binary(
+                    pptx_buffer.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    filename,
+                )
+            except Exception as exc:
+                self.send_json({"error": str(exc)}, status=500)
+            return
         self.send_error(404)
 
     def do_POST(self):
@@ -207,6 +232,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise FileNotFoundError("The file /Users/venkataraviaithinkers/Downloads/duloxetine_01_01_2020_to_01_01_2020-2.xlsx was not found in your Downloads folder.")
                 result = import_trade_file(source_path, source_path.name, replace=True)
                 self.send_json({"source_type": "downloads_file", "stored_path": str(source_path), **result})
+                return
+            if parsed.path == "/api/mappings/auto-map":
+                result = run_agentic_automap()
+                self.send_json({"success": True, **result})
                 return
             self.send_error(404)
         except Exception as exc:

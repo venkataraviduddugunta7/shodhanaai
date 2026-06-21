@@ -54,6 +54,9 @@
       <button class="nav-item" data-page="pitch" onclick="showPage('pitch')">
         <span class="material-symbols-outlined">campaign</span> Pitch Workspace
       </button>
+      <button class="nav-item" data-page="advisor" onclick="showPage('advisor')">
+        <span class="material-symbols-outlined">auto_awesome</span> AI Growth Advisor
+      </button>
 
       <div class="sidebar-divider"></div>
       <div class="sidebar-header">Master Registries</div>
@@ -430,6 +433,11 @@
             <h2>Product Synonym Registry</h2>
             <p>Raw product descriptions mapped to standardized Duloxetine subcategories.</p>
           </div>
+          <div class="button-row">
+            <button class="secondary small tip" data-tooltip="Run AI agent to auto-align all unassigned variations using previous learned mappings." onclick="runAiAutoMapper(this)">
+              <span class="material-symbols-outlined" style="font-size: 16px;">auto_awesome</span> Run AI Auto-Mapper
+            </button>
+          </div>
         </div>
         <div class="panel">
           <div class="search-bar-container" style="padding: 16px; border-bottom: 1px solid var(--md-sys-color-outline); display: flex; gap: 12px; align-items: center; background: rgba(0,0,0,0.01);">
@@ -446,6 +454,11 @@
           <div>
             <h2>Company Name Registry</h2>
             <p>Standardized importer and exporter lists cleaned of spelling variations and address text.</p>
+          </div>
+          <div class="button-row">
+            <button class="secondary small tip" data-tooltip="Run AI agent to auto-align all unassigned variations using previous learned mappings." onclick="runAiAutoMapper(this)">
+              <span class="material-symbols-outlined" style="font-size: 16px;">auto_awesome</span> Run AI Auto-Mapper
+            </button>
           </div>
         </div>
         <div class="panel">
@@ -464,6 +477,11 @@
             <h2>Country Name Registry</h2>
             <p>Raw importer and exporter country names mapped to standardized country names.</p>
           </div>
+          <div class="button-row">
+            <button class="secondary small tip" data-tooltip="Run AI agent to auto-align all unassigned variations using previous learned mappings." onclick="runAiAutoMapper(this)">
+              <span class="material-symbols-outlined" style="font-size: 16px;">auto_awesome</span> Run AI Auto-Mapper
+            </button>
+          </div>
         </div>
         <div class="panel">
           <div class="search-bar-container" style="padding: 16px; border-bottom: 1px solid var(--md-sys-color-outline); display: flex; gap: 12px; align-items: center; background: rgba(0,0,0,0.01);">
@@ -471,6 +489,81 @@
             <input type="text" id="countryRegistrySearch" placeholder="Search standard names or variations..." oninput="filterCountryRegistry()" style="width: 100%; max-width: 400px; padding: 10px 14px; border: 1px solid var(--md-sys-color-outline); border-radius: 8px; font-size: 14px; box-sizing: border-box; background:#fff; outline:none; transition: border-color 0.2s;" onfocus="this.style.borderColor='var(--md-sys-color-primary)'" onblur="this.style.borderColor='var(--md-sys-color-outline)'">
           </div>
           <div id="countryMappings" class="table-wrap tall"></div>
+        </div>
+      </section>
+
+      <!-- PAGE: AI GROWTH ADVISOR -->
+      <section class="page" id="page-advisor">
+        <div class="page-head">
+          <div>
+            <h2>AI Growth Advisor & Strategic Planner</h2>
+            <p>Explore competitor vulnerabilities, market entry recommendations, pricing bounds, and top sales opportunities.</p>
+          </div>
+          <div class="button-row">
+            <button class="secondary tip" data-tooltip="Re-audit the trade database and refresh recommendations." onclick="loadGrowthAdvisor()">
+              <span class="material-symbols-outlined" style="font-size: 16px;">sync</span> Refresh Advisor
+            </button>
+          </div>
+        </div>
+
+        <div class="grid three">
+          <!-- Col 1: Target Accounts -->
+          <div class="panel">
+            <div class="panel-head">
+              <h3><span class="material-symbols-outlined" style="color:var(--md-sys-color-primary); font-size:18px;">track_changes</span> Top Target Sourcing Accounts</h3>
+            </div>
+            <div style="padding: 16px; display:flex; flex-direction:column; gap:16px;" id="advisorTargetAccounts">
+              <div class="empty">Audit data to load targets.</div>
+            </div>
+          </div>
+
+          <!-- Col 2: Competitor Vulnerability -->
+          <div class="panel">
+            <div class="panel-head">
+              <h3><span class="material-symbols-outlined" style="color:var(--md-sys-color-error); font-size:18px;">warning</span> Competitor Vulnerability Audit</h3>
+            </div>
+            <div style="padding: 16px; display:flex; flex-direction:column; gap:12px;" id="advisorCompetitors">
+              <div class="empty">Audit data to load competitor analysis.</div>
+            </div>
+          </div>
+
+          <!-- Col 3: Regional Planner -->
+          <div class="panel">
+            <div class="panel-head">
+              <h3><span class="material-symbols-outlined" style="color:var(--md-sys-color-secondary); font-size:18px;">explore</span> Regional Market Entry Planner</h3>
+            </div>
+            <div style="padding: 16px; display:flex; flex-direction:column; gap:12px;" id="advisorRegions">
+              <div class="empty">Audit data to load regional expansion recommendations.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Row 2: Price matrix -->
+        <div class="panel" style="margin-top: 24px;">
+          <div class="panel-head">
+            <h3><span class="material-symbols-outlined" style="color:var(--md-sys-color-primary); font-size:18px;">payments</span> AI Sourcing Pricing Matrix</h3>
+          </div>
+          <div style="padding:16px;">
+            <p style="font-size:13px; color:var(--md-sys-color-on-surface-variant); margin-bottom:16px;">
+              Observed pricing benchmarks in import records and AI-suggested commercial pitch ranges:
+            </p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Product Category</th>
+                    <th>Observed Minimum</th>
+                    <th>Observed Average</th>
+                    <th>Observed Maximum</th>
+                    <th>Suggested Pitch Price Range</th>
+                  </tr>
+                </thead>
+                <tbody id="advisorPricingBody">
+                  <tr><td colspan="5" class="empty">Load audit data to display pricing bounds.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -491,6 +584,9 @@
             </button>
             <button class="ghost small tip" data-tooltip="Regenerate proposal text." onclick="regeneratePitch()">Regenerate</button>
             <button class="ghost small tip" data-tooltip="Save pitch workspace content to a raw text file." onclick="exportPitchText()">Save Text</button>
+            <button class="ghost small tip" data-tooltip="Download an editable PowerPoint presentation deck." onclick="downloadPptxDeck()">
+              <span class="material-symbols-outlined">presentation_play</span> Download PPTX Deck
+            </button>
             <button class="ghost small tip" data-tooltip="Export PowerPoint storyboard outline." onclick="exportPptMarkdown()">PPT Storyboard</button>
             <button class="ghost small tip" data-tooltip="Close and return to opportunity target ranker." onclick="showPage('opportunities')">Exit</button>
           </div>

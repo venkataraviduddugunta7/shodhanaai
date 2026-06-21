@@ -716,6 +716,17 @@ def cleaning_review():
     return {"summary": summary, "products": product_rows, "companies": company_rows, "issue_rows": issue_rows}
 
 
+def learn_mapping_rule(conn, kind, raw_name, standard_name):
+    conn.execute("delete from learned_rules where rule_type = ? and raw_pattern = ?", (kind, raw_name))
+    conn.execute(
+        """
+        insert into learned_rules(rule_type, raw_pattern, mapped_standard, created_at)
+        values (?, ?, ?, ?)
+        """,
+        (kind, raw_name, standard_name, int(time.time()))
+    )
+
+
 def update_mapping(kind, mapping_id, action, value=""):
     if action not in {"approve", "edit", "reject"}:
         raise ValueError("Mapping action must be approve, edit, or reject.")
@@ -740,11 +751,15 @@ def update_mapping(kind, mapping_id, action, value=""):
         if not row:
             raise ValueError(f"Mapping not found: {mapping_id}")
         row = dict(row)
+        raw_name = row.get("raw_product_description") or row.get("raw_company_name") or row.get("raw_country_name") or ""
+        
         if action == "reject":
             conn.execute(
                 f"update {table} set status = 'Rejected', {approved_column} = '' where id = ?",
                 (mapping_id,),
             )
+            if raw_name:
+                conn.execute("delete from learned_rules where rule_type = ? and raw_pattern = ?", (kind, raw_name))
             status = "Rejected"
             approved = ""
         else:
@@ -769,6 +784,8 @@ def update_mapping(kind, mapping_id, action, value=""):
                     mapping_id,
                 ),
             )
+            if raw_name:
+                learn_mapping_rule(conn, kind, raw_name, approved)
             status = "Approved"
         return {"id": mapping_id, "kind": kind, "status": status, "approved": approved}
 
@@ -1030,7 +1047,15 @@ def approved_product_map(conn):
         where status = 'Approved' and coalesce(approved_standard_product, '') != ''
         """
     ).fetchall()
-    return {simple_key(row["raw_product_description"]): row["approved_standard_product"] for row in rows}
+    mapping = {simple_key(row["raw_product_description"]): row["approved_standard_product"] for row in rows}
+    
+    # Load learned rules
+    rules = conn.execute(
+        "select raw_pattern, mapped_standard from learned_rules where rule_type = 'product'"
+    ).fetchall()
+    for rule in rules:
+        mapping[simple_key(rule["raw_pattern"])] = rule["mapped_standard"]
+    return mapping
 
 
 def approved_company_map(conn):
@@ -1045,6 +1070,14 @@ def approved_company_map(conn):
     for row in rows:
         mapping[simple_key(row["raw_company_name"])] = row["approved_standard_company_name"]
         mapping[matching_company_key(row["raw_company_name"])] = row["approved_standard_company_name"]
+        
+    # Load learned rules
+    rules = conn.execute(
+        "select raw_pattern, mapped_standard from learned_rules where rule_type = 'company'"
+    ).fetchall()
+    for rule in rules:
+        mapping[simple_key(rule["raw_pattern"])] = rule["mapped_standard"]
+        mapping[matching_company_key(rule["raw_pattern"])] = rule["mapped_standard"]
     return mapping
 
 
@@ -2042,9 +2075,14 @@ def approved_country_map(conn):
         where status = 'Approved' and coalesce(approved_standard_country_name, '') != ''
         """
     ).fetchall()
-    mapping = {}
-    for row in rows:
-        mapping[simple_key(row["raw_country_name"])] = row["approved_standard_country_name"]
+    mapping = {simple_key(row["raw_country_name"]): row["approved_standard_country_name"] for row in rows}
+    
+    # Load learned rules
+    rules = conn.execute(
+        "select raw_pattern, mapped_standard from learned_rules where rule_type = 'country'"
+    ).fetchall()
+    for rule in rules:
+        mapping[simple_key(rule["raw_pattern"])] = rule["mapped_standard"]
     return mapping
 
 
@@ -2095,3 +2133,90 @@ def _merge_country_mapping(mapping_rows, role, raw_name, standard_name, confiden
         current["reason_for_suggestion"] = reason
         current["approved_standard_country_name"] = standard_name if status == "Approved" else current.get("approved_standard_country_name", "")
         current["status"] = status if current["status"] != "Approved" else current["status"]
+
+
+def run_agentic_automap():
+    with connect() as conn:
+        # Load active maps including learned rules
+        prod_map = approved_product_map(conn)
+        comp_map = approved_company_map(conn)
+        cnt_map = approved_country_map(conn)
+        
+        updated_products = 0
+        updated_companies = 0
+        updated_countries = 0
+        
+        # 1. Product Mappings Auto-Map
+        pending_products = conn.execute("select * from product_mappings where status = 'Pending'").fetchall()
+        for p in pending_products:
+            raw = p["raw_product_description"]
+            raw_key = simple_key(raw)
+            if raw_key in prod_map:
+                std = prod_map[raw_key]
+                conn.execute(
+                    "update product_mappings set status = 'Approved', approved_standard_product = ?, reason_for_suggestion = ? where id = ?",
+                    (std, "Auto-approved based on learned AI mapping pattern.", p["id"])
+                )
+                updated_products += 1
+            else:
+                std, conf, status, reason = classify_product(raw)
+                if status == "Approved" or (std != "Other / Review Required" and conf >= 0.8):
+                    conn.execute(
+                        "update product_mappings set status = 'Approved', approved_standard_product = ?, reason_for_suggestion = ? where id = ?",
+                        (std, f"Agentic auto-approval: {reason}", p["id"])
+                    )
+                    updated_products += 1
+                    
+        # 2. Company Mappings Auto-Map
+        pending_companies = conn.execute("select * from company_mappings where status = 'Pending'").fetchall()
+        for c in pending_companies:
+            raw = c["raw_company_name"]
+            raw_key = simple_key(raw)
+            match_key = matching_company_key(raw)
+            if raw_key in comp_map or match_key in comp_map:
+                std = comp_map.get(raw_key) or comp_map.get(match_key)
+                conn.execute(
+                    "update company_mappings set status = 'Approved', approved_standard_company_name = ?, reason_for_suggestion = ? where id = ?",
+                    (std, "Auto-approved based on learned AI mapping pattern.", c["id"])
+                )
+                updated_companies += 1
+            else:
+                std, conf, status, reason = clean_company_name(raw, comp_map)
+                if status == "Approved" or (std not in {"UNKNOWN", "TO THE ORDER OF"} and conf >= 0.72):
+                    conn.execute(
+                        "update company_mappings set status = 'Approved', approved_standard_company_name = ?, reason_for_suggestion = ? where id = ?",
+                        (std, f"Agentic auto-approval: {reason}", c["id"])
+                    )
+                    updated_companies += 1
+                    
+        # 3. Country Mappings Auto-Map
+        pending_countries = conn.execute("select * from country_mappings where status = 'Pending'").fetchall()
+        for cn in pending_countries:
+            raw = cn["raw_country_name"]
+            raw_key = simple_key(raw)
+            if raw_key in cnt_map:
+                std = cnt_map[raw_key]
+                conn.execute(
+                    "update country_mappings set status = 'Approved', approved_standard_country_name = ?, reason_for_suggestion = ? where id = ?",
+                    (std, "Auto-approved based on learned AI mapping pattern.", cn["id"])
+                )
+                updated_countries += 1
+            else:
+                std, conf, status, reason = clean_country_name(raw, cnt_map)
+                if status == "Approved" or (std != "Unknown" and conf >= 0.8):
+                    conn.execute(
+                        "update country_mappings set status = 'Approved', approved_standard_country_name = ?, reason_for_suggestion = ? where id = ?",
+                        (std, f"Agentic auto-approval: {reason}", cn["id"])
+                    )
+                    updated_countries += 1
+                    
+    # Reprocess raw records with the newly approved mappings if any updates were made
+    if updated_products > 0 or updated_companies > 0 or updated_countries > 0:
+        rerun_cleaning()
+        
+    return {
+        "updated_products": updated_products,
+        "updated_companies": updated_companies,
+        "updated_countries": updated_countries
+    }
+

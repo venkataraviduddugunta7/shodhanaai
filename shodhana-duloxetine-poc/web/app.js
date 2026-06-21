@@ -35,6 +35,9 @@ function showPage(page, updateUrl = true) {
   document.querySelectorAll(".page").forEach((el) => el.classList.remove("active"));
   document.querySelectorAll(".nav-item").forEach((el) => el.classList.toggle("active", el.dataset.page === page));
   document.getElementById(`page-${page}`).classList.add("active");
+  if (page === "advisor") {
+    loadGrowthAdvisor();
+  }
   if (updateUrl) {
     const path = pageToPath(page);
     if (window.location.pathname !== path) window.history.pushState({page}, "", path);
@@ -42,7 +45,7 @@ function showPage(page, updateUrl = true) {
 }
 
 async function refreshAll() {
-  await Promise.all([loadDashboard(), loadOpportunities(), loadMappings(), loadReview()]);
+  await Promise.all([loadDashboard(), loadOpportunities(), loadMappings(), loadReview(), loadGrowthAdvisor()]);
 }
 
 async function importSample(button) {
@@ -1990,6 +1993,7 @@ window.addEventListener("popstate", async () => {
   const page = pathToPage(window.location.pathname);
   if (page === "opportunity-detail") await loadOpportunityDetailFromPath();
   if (page === "pitch") await loadPitchFromPath();
+  if (page === "advisor") await loadGrowthAdvisor();
   showPage(page, false);
 });
 refreshAll()
@@ -1998,6 +2002,7 @@ refreshAll()
     const page = pathToPage(window.location.pathname);
     if (page === "opportunity-detail") await loadOpportunityDetailFromPath();
     if (page === "pitch") await loadPitchFromPath();
+    if (page === "advisor") await loadGrowthAdvisor();
     showPage(page, false);
   })
   .catch((error) => setStatus(error.message || String(error), true));
@@ -2012,12 +2017,14 @@ function pageToPath(page) {
     products: "/products",
     companies: "/companies",
     countries: "/countries",
+    advisor: "/advisor",
   }[page] || "/";
 }
 
 function pathToPage(path) {
   if (/^\/opportunities\/[^/]+/.test(path)) return "opportunity-detail";
   if (/^\/pitch(\/[^/]+)?/.test(path)) return "pitch";
+  if (path === "/advisor") return "advisor";
   return {
     "/cleaning-review": "review",
     "/dashboard": "dashboard",
@@ -2291,6 +2298,125 @@ async function mappingGroupAction(button, kind, ids, action, valueInputId) {
       await loadMappings();
     } catch (err) {
       showToast("Failed to process group action: " + err.message, true);
+    }
+  });
+}
+
+// --- AI Growth Advisor Controllers ---
+async function loadGrowthAdvisor() {
+  try {
+    const data = await getJSON("/api/growth-insights");
+    renderGrowthAdvisor(data);
+  } catch (err) {
+    console.error("Failed to load growth insights:", err);
+  }
+}
+
+function renderGrowthAdvisor(data) {
+  // 1. Top Target Sourcing Accounts
+  const targetsContainer = document.getElementById("advisorTargetAccounts");
+  if (!data.target_accounts || data.target_accounts.length === 0) {
+    targetsContainer.innerHTML = '<div class="empty">No high opportunity targets identified. Load more data first.</div>';
+  } else {
+    targetsContainer.innerHTML = data.target_accounts.map(ta => `
+      <div class="advisor-card">
+        <div class="advisor-card-title">${esc(ta.importer)}</div>
+        <div class="advisor-card-meta">${esc(ta.country)} • ${esc(ta.product)}</div>
+        <div style="font-size: 13px; line-height: 1.4; margin-bottom: 8px;">
+          <strong>Competitor Supplier:</strong> ${esc(ta.competitor)}<br>
+          <strong>Sourced Volume:</strong> ${num(ta.volume_kg)} KG<br>
+          <strong>Average Price:</strong> $${num(ta.avg_price)}/KG
+        </div>
+        <div class="advisor-card-tags">
+          <span class="advisor-tag high">Score ${ta.score}</span>
+          ${ta.reasons.slice(0, 2).map(r => `<span class="advisor-tag">${esc(r)}</span>`).join("")}
+        </div>
+        <button class="primary small" style="margin-top:12px; width:100%;" onclick="quickPitchFromAdvisor('${esc(ta.opportunity_id)}')">
+          <span class="material-symbols-outlined" style="font-size:14px; vertical-align:middle; margin-right:4px;">campaign</span> Draft Sourcing Pitch
+        </button>
+      </div>
+    `).join("");
+  }
+
+  // 2. Competitor Vulnerabilities
+  const competitorsContainer = document.getElementById("advisorCompetitors");
+  if (!data.vulnerable_competitors || data.vulnerable_competitors.length === 0) {
+    competitorsContainer.innerHTML = '<div class="empty">No competitor vulnerabilities detected.</div>';
+  } else {
+    competitorsContainer.innerHTML = data.vulnerable_competitors.map(vc => `
+      <div class="vulnerability-item">
+        <div class="vulnerability-title">${esc(vc.competitor)}</div>
+        <div class="vulnerability-desc">
+          <strong>Supplied Volume:</strong> ${num(vc.volume_kg)} KG across ${vc.clients_count} client(s)<br>
+          <strong>Average Pricing:</strong> $${num(vc.avg_price)}/KG<br>
+          <span style="color:var(--md-sys-color-error); font-weight:500;">Weaknesses:</span> ${vc.vulnerability_reasons.join(", ")}
+        </div>
+      </div>
+    `).join("");
+  }
+
+  // 3. Regional Entry Strategies
+  const regionsContainer = document.getElementById("advisorRegions");
+  if (!data.regional_strategies || data.regional_strategies.length === 0) {
+    regionsContainer.innerHTML = '<div class="empty">No market entry recommendations available.</div>';
+  } else {
+    regionsContainer.innerHTML = data.regional_strategies.map(rs => `
+      <div class="region-item">
+        <div class="region-title">${esc(rs.country)}</div>
+        <div class="region-desc">
+          <strong>Market Size:</strong> ${num(rs.total_volume_kg)} KG<br>
+          <strong>Shodhana Share:</strong> ${rs.shodhana_share_pct}% (${rs.competitors_count} active competitors)<br>
+          <span style="color:var(--md-sys-color-secondary); font-weight:500;">Signals:</span> ${rs.recommendation_reasons.join(", ")}
+        </div>
+      </div>
+    `).join("");
+  }
+
+  // 4. Dynamic Pricing Matrix
+  const matrixBody = document.getElementById("advisorPricingBody");
+  const categories = Object.keys(data.pricing_matrix || {});
+  if (categories.length === 0) {
+    matrixBody.innerHTML = '<tr><td colspan="5" class="empty">No pricing observations found.</td></tr>';
+  } else {
+    matrixBody.innerHTML = categories.map(cat => {
+      const pm = data.pricing_matrix[cat];
+      return `
+        <tr>
+          <td><strong>${esc(cat)}</strong></td>
+          <td>$${num(pm.observed_min)}</td>
+          <td>$${num(pm.observed_avg)}</td>
+          <td>$${num(pm.observed_max)}</td>
+          <td><span class="pill success">${esc(pm.suggested_pitch_range)}</span></td>
+        </tr>
+      `;
+    }).join("");
+  }
+}
+
+async function quickPitchFromAdvisor(oppId) {
+  showPage("pitch");
+  await openPitch(oppId);
+}
+
+function downloadPptxDeck() {
+  const id = pitchData?.opportunity_id || pitchData?.detail?.opportunity?.opportunity_id;
+  if (!id) {
+    setStatus("Select an opportunity to download PowerPoint presentation.", true);
+    return;
+  }
+  window.location.href = `/api/export/pitch-deck?opportunity_id=${encodeURIComponent(id)}`;
+}
+
+async function runAiAutoMapper(button) {
+  await withBusy(button, "Auto-Mapping", async () => {
+    setStatus("Running AI Auto-Mapper agent...");
+    try {
+      const result = await postJSON("/api/mappings/auto-map", {});
+      await refreshAll();
+      setStatus(`AI Auto-Mapper finished: Standardized ${result.updated_products} products, ${result.updated_companies} companies, and ${result.updated_countries} countries.`);
+      showToast("AI Auto-Mapping complete!");
+    } catch (err) {
+      showToast("AI Auto-Mapping failed: " + err.message, true);
     }
   });
 }
